@@ -112,7 +112,7 @@ BIAM/
 
 ## Contact Information
 
-**Project Lead**: Wenxing Zhou, Chao Xu, Xuelin Zhang  
+**Project Lead**: Wenxing Zhou, Chao Xu, Jian Xiao, Jing Hu, Xuelin Zhang  
 **Development Time**: September 2025  
 **Project Status**: Core functionality completed, ready for use
 

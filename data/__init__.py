@@ -2,7 +2,7 @@
 BIAM Data Module
 Handles data generation, preprocessing, and augmentation for BIAM model
 
-Authors: Wenxing Zhou, Chao Xu, Xuelin Zhang
+Authors: Wenxing Zhou, Chao Xu, Jian Xiao, Jing Hu, Xuelin Zhang
 Date: September 7, 2025
 """
 

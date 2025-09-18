@@ -2,22 +2,21 @@
 
 ## Primary Authors
 
-**Wenxing Zhou**¹  
-College of Intelligence and Computing, Tianjin University, Tianjin, China
+**Wenxing Zhou**¹
 
-**Chao Xu**¹  
-College of Intelligence and Computing, Tianjin University, Tianjin, China
+**Chao Xu**¹
+
+**Jian Xiao**¹
+
+**Jing Hu**¹
 
 **Xuelin Zhang**²,*  
-College of Informatics, Huazhong Agricultural University, Wuhan, China  
 *Corresponding author
 
 ## Contact Information
 
-- **Wenxing Zhou**: [zhouwx@tju.edu.cn] 
-- **Chao Xu**
-- **Xuelin Zhang**
-
+- **Wenxing Zhou**: [zhouwx@tju.edu.cn] (First Author)
+- **Xuelin Zhang**: [zhangxuelin@webmail.hzau.edu.cn] (Corresponding Author)
 ## Affiliations
 
 ¹ College of Intelligence and Computing, Tianjin University, Tianjin, China  
@@ -41,7 +40,7 @@ If you use BIAM in your research, please cite:
 ```bibtex
 @article{zhou2025biam,
   title={BIAM: Bilevel Interactive Additive Model for Datasets with Missing Values, Noisy Labels and Imbalanced Categories},
-  author={Zhou, Wenxing and Xu, Chao and Zhang, Xuelin},
+  author={Zhou, Wenxing and Xu, Chao and Xiao, Jian and Hu, Jing and Zhang, Xuelin},
   journal={arXiv preprint arXiv:2025.xxxxx},
   year={2025}
 }

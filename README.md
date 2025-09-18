@@ -319,7 +319,7 @@ If you use BIAM in your research, please cite:
 ```bibtex
 @article{zhou2025biam,
   title={BIAM: Bilevel Interactive Additive Model for Datasets with Missing Values, Noisy Labels and Imbalanced Categories},
-  author={Zhou, Wenxing and Xu, Chao and Zhang, Xuelin},
+  author={Zhou, Wenxing and Xu, Chao and Xiao, Jian and Hu, Jing and Zhang, Xuelin},
   journal={arXiv preprint arXiv:2025.xxxxx},
   year={2025}
 }
