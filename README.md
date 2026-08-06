@@ -315,9 +315,3 @@ for epoch in range(config.epochs):
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- This implementation is based on the BIAM paper
-- Inspired by Meta-Weight-Net and other bilevel optimization methods
-- Built with PyTorch and modern deep learning practices
