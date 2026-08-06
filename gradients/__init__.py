@@ -1,9 +1,6 @@
 """
 BIAM Gradients Module
 Contains optimization algorithms and gradient computation methods
-
-Authors: Wenxing Zhou, Chao Xu, Jian Xiao, Jing Hu, Xuelin Zhang
-Date: September 7, 2025
 """
 
 from .biam_optimizer import BIAMOptimizer
