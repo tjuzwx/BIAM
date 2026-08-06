@@ -316,10 +316,6 @@ for epoch in range(config.epochs):
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Acknowledgments
 
 - This implementation is based on the BIAM paper
