@@ -247,12 +247,10 @@ class BIAMDataGenerator:
         """
         Generate Adult dataset with missing values and imbalance
         """
-        # Generate synthetic data with Adult-like characteristics
         return self._generate_synthetic_classification()
     
     def _generate_credit_data(self):
         """
         Generate Credit dataset with missing values and imbalance
         """
-        # Generate synthetic data with Credit-like characteristics
         return self._generate_synthetic_classification()

@@ -26,20 +26,17 @@ class BIAMWeightingNetwork(nn.Module):
         self.config = config
         self.device = device
         
-        # Network architecture based on MWNet paper
-        self.input_dim = 1  # Input is loss/error values
+        self.input_dim = 1 
         self.hidden_dim = 10
-        self.output_dim = 1  # Output is weight
+        self.output_dim = 1
         
-        # Define network layers
         self.linear1 = nn.Linear(self.input_dim, self.hidden_dim)
         self.relu1 = nn.ReLU(inplace=True)
         self.linear2 = nn.Linear(self.hidden_dim, self.output_dim)
         
-        # Initialize weights
         self._initialize_weights()
         
-        # Move to device
+
         self.to(device)
     
     def _initialize_weights(self):

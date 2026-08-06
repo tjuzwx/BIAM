@@ -103,7 +103,6 @@ class BIAMParallelOptimizer:
             Distributed data loader
         """
         if self.is_distributed:
-            # Create distributed sampler
             sampler = torch.utils.data.distributed.DistributedSampler(
                 dataset, num_replicas=self.world_size, rank=self.rank, shuffle=shuffle
             )
@@ -246,8 +245,6 @@ class BIAMParallelOptimizer:
         Returns:
             Pipeline parallel model
         """
-        # Pipeline parallelism implementation
-        # In practice, you would use torch.distributed.pipeline or similar
         
         if hasattr(model, 'additive_model') and hasattr(model, 'weighting_network'):
             # Split model into stages
@@ -333,8 +330,6 @@ class BIAMParallelOptimizer:
         Returns:
             Model with gradient compression
         """
-        # Pipeline parallelism implementation
-        # In practice, you would use more sophisticated compression techniques
         
         original_backward = model.backward
         
@@ -369,8 +364,6 @@ class BIAMParallelOptimizer:
         Returns:
             Asynchronous optimizer
         """
-        # Pipeline parallelism implementation
-        # In practice, you would use more sophisticated async techniques
         
         class AsyncOptimizer:
             def __init__(self, model, optimizer):
@@ -382,8 +375,7 @@ class BIAMParallelOptimizer:
                 """Asynchronous optimization step"""
                 self.gradient_queue.append(gradients)
                 
-                if len(self.gradient_queue) >= 2:  # Process when queue has 2 gradients
-                    # Average gradients
+                if len(self.gradient_queue) >= 2:  
                     avg_gradients = {}
                     for key in gradients.keys():
                         avg_gradients[key] = torch.stack([g[key] for g in self.gradient_queue]).mean(0)

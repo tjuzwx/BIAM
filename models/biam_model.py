@@ -10,9 +10,6 @@ from typing import Dict, Any, Tuple
 import numpy as np
 
 class BIAMModel(nn.Module):
-    """
-    Main BIAM model that combines additive model with weighting network
-    """
     
     def __init__(self, config, device):
         """
@@ -52,14 +49,10 @@ class BIAMModel(nn.Module):
         predictions = self.additive_model(x)
         
         if return_weights:
-            # Calculate sample weights using weighting network
             with torch.no_grad():
-                # Use prediction confidence as input to weighting network
                 if self.task == 'regression':
-                    # For regression, use prediction variance as uncertainty measure
                     prediction_uncertainty = torch.var(predictions, dim=1, keepdim=True)
                 else:
-                    # For classification, use prediction confidence
                     prediction_uncertainty = F.softmax(predictions, dim=1).max(dim=1, keepdim=True)[0]
                 
                 weights = self.weighting_network(prediction_uncertainty)

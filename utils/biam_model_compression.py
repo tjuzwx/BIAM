@@ -368,14 +368,12 @@ class BIAMModelCompression:
         model.eval()
         
         if export_format == 'torchscript':
-            # Export as TorchScript
-            test_input = torch.randn(1, 100).to(self.device)  # Adjust input size
+            test_input = torch.randn(1, 100).to(self.device) 
             traced_model = torch.jit.trace(model, test_input)
             traced_model.save(export_path)
         
         elif export_format == 'onnx':
-            # Export as ONNX
-            test_input = torch.randn(1, 100).to(self.device)  # Adjust input size
+            test_input = torch.randn(1, 100).to(self.device) 
             torch.onnx.export(
                 model, test_input, export_path,
                 export_params=True,

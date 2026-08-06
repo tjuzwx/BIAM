@@ -64,7 +64,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         init_time = time.time() - start_time
         
-        # Should initialize quickly (less than 1 second)
         self.assertLess(init_time, 1.0)
         print(f"Model initialization time: {init_time:.4f}s")
     
@@ -88,7 +87,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         forward_time = (time.time() - start_time) / 10
         
-        # Should be fast (less than 0.1s per batch)
         self.assertLess(forward_time, 0.1)
         print(f"Forward pass time per batch: {forward_time:.4f}s")
     
@@ -117,7 +115,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         training_time = time.time() - start_time
         
-        # Should train reasonably fast (less than 10s for 5 batches)
         self.assertLess(training_time, 10.0)
         print(f"Training time for 5 batches: {training_time:.4f}s")
     
@@ -139,7 +136,6 @@ class TestBIAMPerformance(unittest.TestCase):
         # Calculate memory increase
         memory_increase = model_memory.get('gpu_allocated', 0) - initial_memory.get('gpu_allocated', 0)
         
-        # Should use reasonable amount of memory (less than 1GB)
         self.assertLess(memory_increase, 1.0)
         print(f"Memory increase: {memory_increase:.3f} GB")
     
@@ -166,7 +162,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         loading_time = time.time() - start_time
         
-        # Should load data quickly (less than 5s for 10 batches)
         self.assertLess(loading_time, 5.0)
         print(f"Data loading time for 10 batches: {loading_time:.4f}s")
     
@@ -196,7 +191,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         gradient_time = time.time() - start_time
         
-        # Should compute gradients reasonably fast (less than 5s for 5 batches)
         self.assertLess(gradient_time, 5.0)
         print(f"Gradient computation time for 5 batches: {gradient_time:.4f}s")
     
@@ -217,8 +211,7 @@ class TestBIAMPerformance(unittest.TestCase):
         compressed_model = compression.prune_model(biam_model, pruning_ratio=0.2)
         
         compression_time = time.time() - start_time
-        
-        # Should compress quickly (less than 2s)
+
         self.assertLess(compression_time, 2.0)
         print(f"Model compression time: {compression_time:.4f}s")
         
@@ -231,7 +224,7 @@ class TestBIAMPerformance(unittest.TestCase):
         
         compressed_forward_time = time.time() - start_time
         
-        # Compressed model should be faster
+        # Compressed model   be faster
         print(f"Compressed model forward pass time: {compressed_forward_time:.4f}s")
     
     def test_parallel_processing_performance(self):
@@ -252,8 +245,7 @@ class TestBIAMPerformance(unittest.TestCase):
         parallel_model = parallel_optimizer.wrap_model_for_parallel(biam_model)
         
         parallel_time = time.time() - start_time
-        
-        # Should wrap quickly (less than 1s)
+
         self.assertLess(parallel_time, 1.0)
         print(f"Parallel model wrapping time: {parallel_time:.4f}s")
     
@@ -263,14 +255,12 @@ class TestBIAMPerformance(unittest.TestCase):
         """
         generator = BIAMDataGenerator(self.config)
         
-        # Benchmark data generation
         start_time = time.time()
         
         train_loader, val_loader, test_data = generator.generate_data()
         
         generation_time = time.time() - start_time
-        
-        # Should generate data quickly (less than 5s)
+
         self.assertLess(generation_time, 5.0)
         print(f"Data generation time: {generation_time:.4f}s")
     
@@ -297,7 +287,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         viz_time = time.time() - start_time
         
-        # Should create visualization quickly (less than 2s)
         self.assertLess(viz_time, 2.0)
         print(f"Visualization creation time: {viz_time:.4f}s")
         
@@ -309,7 +298,6 @@ class TestBIAMPerformance(unittest.TestCase):
         """
         Test end-to-end performance
         """
-        # Create data generator
         generator = BIAMDataGenerator(self.config)
         train_loader, val_loader, test_data = generator.generate_data()
         
@@ -329,7 +317,6 @@ class TestBIAMPerformance(unittest.TestCase):
         
         end_to_end_time = time.time() - start_time
         
-        # Should complete end-to-end training reasonably fast (less than 30s)
         self.assertLess(end_to_end_time, 30.0)
         print(f"End-to-end training time for 5 epochs: {end_to_end_time:.4f}s")
     
@@ -341,7 +328,6 @@ class TestBIAMPerformance(unittest.TestCase):
         times = []
         
         for size in sizes:
-            # Create data of different sizes
             X = torch.randn(size, self.n_features).to(self.config.device)
             y = torch.randint(0, 2, (size,)).to(self.config.device)
             
@@ -360,14 +346,12 @@ class TestBIAMPerformance(unittest.TestCase):
             
             print(f"Size {size}: {forward_time:.4f}s")
         
-        # Check that time scales reasonably with data size
         for i in range(1, len(times)):
-            # Time should not increase more than linearly
+            # Time   not increase more than linearly
             time_ratio = times[i] / times[i-1]
             size_ratio = sizes[i] / sizes[i-1]
             
-            # Time ratio should be less than or equal to size ratio
-            self.assertLessEqual(time_ratio, size_ratio * 1.5)  # Allow 50% overhead
+            self.assertLessEqual(time_ratio, size_ratio * 1.5)  
     
     def test_memory_efficiency(self):
         """
@@ -375,7 +359,6 @@ class TestBIAMPerformance(unittest.TestCase):
         """
         memory_optimizer = BIAMMemoryOptimizer(self.config.device)
         
-        # Test memory usage with different batch sizes
         batch_sizes = [32, 64, 128, 256]
         memory_usage = []
         
@@ -410,13 +393,11 @@ class TestBIAMPerformance(unittest.TestCase):
             del X, y, biam_model
             memory_optimizer.clear_cache()
         
-        # Check that memory usage scales reasonably with batch size
         for i in range(1, len(memory_usage)):
             memory_ratio = memory_usage[i] / memory_usage[i-1]
             batch_ratio = batch_sizes[i] / batch_sizes[i-1]
             
-            # Memory ratio should be less than or equal to batch ratio
-            self.assertLessEqual(memory_ratio, batch_ratio * 1.2)  # Allow 20% overhead
+            self.assertLessEqual(memory_ratio, batch_ratio * 1.2)  
 
 if __name__ == '__main__':
     unittest.main()
