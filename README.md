@@ -158,25 +158,6 @@ config.update(
 
 ## Data Generation
 
-### Synthetic Data
-
-BIAM includes comprehensive synthetic data generation for testing:
-
-```python
-from data.biam_data_generator import BIAMDataGenerator
-
-generator = BIAMDataGenerator(config)
-train_loader, val_loader, test_data = generator.generate_data()
-```
-
-### Supported Datasets
-
-- **Synthetic**: Custom generated data with various noise patterns
-- **Adult**: UCI Adult dataset with missing values
-- **Credit**: Credit scoring dataset with imbalance
-- **MNIST**: Image classification with label noise
-- **CIFAR-10**: Natural image classification
-
 ## Visualization
 
 ### Training Curves
