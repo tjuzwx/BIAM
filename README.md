@@ -1,6 +1,6 @@
 # BIAM：面向特征缺失的概率双层交互可加模型
 
-本仓库实现论文中的概率双层交互可加模型（Probabilistic Bilevel Interactive Additive Model，BIAM）。代码与 `biam.tex` 的模型定义、联合优化算法和实验协议对齐，并按 `appendix.tex` 的附录三保存环境、随机种子、数据划分索引、扰动记录、早停信息、逐样本预测和汇总指标。本仓库只处理 BIAM，不包含 BATM 的更新。
+本仓库实现概率双层交互可加模型（Probabilistic Bilevel Interactive Additive Model，BIAM）。代码与 `biam.tex` 的模型定义、联合优化算法和实验协议对齐，并保存环境、随机种子、数据划分索引、扰动记录、早停信息、逐样本预测和汇总指标。
 
 ## 1. 模型与论文的对应关系
 
@@ -39,14 +39,14 @@ BIAM 的线性预测量由四部分组成：
 
 大论文“实施细节与超参数配置”及表 3-2 明确指定统一实验环境如下：
 
-| 配置项 | 大论文指定值 |
-|---|---|
-| CPU | Intel Xeon Platinum 8175M |
-| GPU | NVIDIA RTX A6000（48GB） |
-| 内存 | 128GB |
-| 操作系统 | Ubuntu 20.04 LTS |
-| CUDA | 12.1 |
-| PyTorch | 2.1.0 |
+| 配置项   | 大论文指定值              |
+| -------- | ------------------------- |
+| CPU      | Intel Xeon Platinum 8175M |
+| GPU      | NVIDIA RTX A6000（48GB）  |
+| 内存     | 128GB                     |
+| 操作系统 | Ubuntu 20.04 LTS          |
+| CUDA     | 12.1                      |
+| PyTorch  | 2.1.0                     |
 
 正式复现实验默认启用 `strict_environment: true`。程序启动时会检查操作系统、CPU、GPU、显存、系统内存、CUDA 和 PyTorch；任何一项不匹配都会在训练开始前终止运行。校验通过后，要求值、实际检测值及正式环境校验状态会写入 `provenance.json`。
 
@@ -136,26 +136,26 @@ python biam_main.py --seeds 101 202 303 404 505
 
 ## 5. 默认超参数
 
-| 配置项 | 默认值 | 含义 |
-|---|---:|---|
-| `hinge_bins` | 8 | 每条曲线的 Hinge 结点数 \(L_h\)，每个结点含正、反两个基函数 |
-| `structure_samples` | 8 | 反变量结构样本数 \(S\)，必须是不小于 4 的偶数 |
-| `inner_steps` | 5 | 每个候选结构的下层更新步数 \(K_{in}\) |
-| `lambda_l0` | `5e-4` | 预期结构组数量正则 \(\lambda_0\) |
-| `lambda_l2` | `1e-4` | Hinge 与缺失效应系数正则 \(\lambda_2\) |
-| `lambda_kl` | `1e-4` | Bernoulli 结构分布 KL 正则 |
-| `prior_probability` | 0.1 | 稀疏 Bernoulli 先验概率 \(\pi_0\) |
-| `gate_threshold` | 0.5 | 部署硬门控阈值 \(\kappa\) |
-| `min_interaction_support` | 20 | 有向交互的最小训练支持度 \(n_{\min}\) |
-| `noise_scale` | 0.3 | 常规仿真回归基础噪声尺度 \(\sigma_\varepsilon\) |
-| `lower_lr` | `1e-2` | 可加模型更新学习率 \(\eta_\theta\) |
-| `structure_lr` | `1e-2` | 结构分布更新学习率 \(\eta_\phi\) |
-| `weight_lr` | `1e-3` | 权重网络更新学习率 \(\eta_\psi\) |
-| `batch_size` | 64 | 训练批次大小 |
-| `meta_batch_size` | 64 | 元数据批次大小 |
-| `epochs` | 200 | 最大训练轮数 |
-| `patience` | 20 | 调参集早停耐心值 |
-| `final_refit_steps` | 100 | 固定结构后的最终重拟合步数 |
+| 配置项                      |   默认值 | 含义                                                       |
+| --------------------------- | -------: | ---------------------------------------------------------- |
+| `hinge_bins`              |        8 | 每条曲线的 Hinge 结点数\(L_h\)，每个结点含正、反两个基函数 |
+| `structure_samples`       |        8 | 反变量结构样本数\(S\)，必须是不小于 4 的偶数               |
+| `inner_steps`             |        5 | 每个候选结构的下层更新步数\(K_{in}\)                       |
+| `lambda_l0`               | `5e-4` | 预期结构组数量正则\(\lambda_0\)                            |
+| `lambda_l2`               | `1e-4` | Hinge 与缺失效应系数正则\(\lambda_2\)                      |
+| `lambda_kl`               | `1e-4` | Bernoulli 结构分布 KL 正则                                 |
+| `prior_probability`       |      0.1 | 稀疏 Bernoulli 先验概率\(\pi_0\)                           |
+| `gate_threshold`          |      0.5 | 部署硬门控阈值\(\kappa\)                                   |
+| `min_interaction_support` |       20 | 有向交互的最小训练支持度\(n_{\min}\)                       |
+| `noise_scale`             |      0.3 | 常规仿真回归基础噪声尺度\(\sigma_\varepsilon\)             |
+| `lower_lr`                | `1e-2` | 可加模型更新学习率\(\eta_\theta\)                          |
+| `structure_lr`            | `1e-2` | 结构分布更新学习率\(\eta_\phi\)                            |
+| `weight_lr`               | `1e-3` | 权重网络更新学习率\(\eta_\psi\)                            |
+| `batch_size`              |       64 | 训练批次大小                                               |
+| `meta_batch_size`         |       64 | 元数据批次大小                                             |
+| `epochs`                  |      200 | 最大训练轮数                                               |
+| `patience`                |       20 | 调参集早停耐心值                                           |
+| `final_refit_steps`       |      100 | 固定结构后的最终重拟合步数                                 |
 
 其中 \(L_h=8\)、\(S=8\)、\(K_{in}=5\)、\(\lambda_0=5\times10^{-4}\) 和门控阈值 0.5 来自 `biam.tex` 的参考配置或公式。论文材料没有为所有任务唯一指定其余数值，因此其余值作为仓库默认配置明确保存，不冒充未给出的论文常量；正式实验应只用调参集确定这些参数，并保存最终配置。
 
