@@ -102,10 +102,10 @@ python biam_main.py --quick --task regression \
 
 ## 4. 论文配置实验
 
-默认配置在 `configs/biam_default.yaml`。默认使用 5 个独立运行种子：
+默认配置在 `configs/biam_default.yaml`。默认使用以下 10 个独立运行种子：
 
 ```yaml
-seeds: [11, 22, 33, 44, 55]
+seeds: [145, 31, 0, 789, 517, 52, 91, 1, 414, 382]
 ```
 
 运行默认仿真回归实验：
@@ -126,13 +126,13 @@ python biam_main.py \
   --missing-ratio 0.3
 ```
 
-也可显式指定 3 至 5 个种子：
+也可在命令行中显式指定同一组种子：
 
 ```bash
-python biam_main.py --seeds 101 202 303 404 505
+python biam_main.py --seeds 145 31 0 789 517 52 91 1 414 382
 ```
 
-同一设置中的所有对比方法应读取 BIAM 输出的 `split_indices.npz` 和 `data_artifacts.npz`，不要分别重新划分数据或生成扰动。论文表格采用 10 次重复时，可传入 10 个种子；本仓库根据当前复现要求默认运行 5 次并报告样本标准差。
+同一设置中的所有对比方法应读取 BIAM 输出的 `split_indices.npz` 和 `data_artifacts.npz`，不要分别重新划分数据或生成扰动。本仓库根据当前复现要求默认运行上述 10 次，并报告均值与样本标准差。
 
 ## 5. 默认超参数
 

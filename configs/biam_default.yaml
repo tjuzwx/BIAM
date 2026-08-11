@@ -35,7 +35,7 @@ tune_refit_steps: 10
 final_refit_steps: 100
 gradient_clip: 10.0
 
-seeds: [11, 22, 33, 44, 55]
+seeds: [145, 31, 0, 789, 517, 52, 91, 1, 414, 382]
 regression_outer_folds: 5
 regression_strata: 10
 output_dir: results/biam

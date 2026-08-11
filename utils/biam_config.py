@@ -51,7 +51,7 @@ class BIAMConfig:
         self.final_refit_steps = 100
         self.gradient_clip = 10.0
 
-        self.seeds = [11, 22, 33, 44, 55]
+        self.seeds = [145, 31, 0, 789, 517, 52, 91, 1, 414, 382]
         self.regression_outer_folds = 5
         self.regression_strata = 10
         self.output_dir = "results/biam"

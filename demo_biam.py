@@ -7,7 +7,7 @@ def main() -> None:
         task="classification",
         input_dim=8,
         n_samples=200,
-        seeds=[11],
+        seeds=[145],
         epochs=3,
         patience=3,
         structure_samples=4,
