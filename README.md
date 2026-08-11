@@ -1,8 +1,8 @@
 # BIAM：面向特征缺失的概率双层交互可加模型
 
-本仓库实现概率双层交互可加模型（Probabilistic Bilevel Interactive Additive Model，BIAM）。代码与 `biam.tex` 的模型定义、联合优化算法和实验协议对齐，并保存环境、随机种子、数据划分索引、扰动记录、早停信息、逐样本预测和汇总指标。
+本仓库实现大论文第四章概率双层交互可加模型（Probabilistic Bilevel Interactive Additive Model，BIAM）。
 
-## 1. 模型与论文的对应关系
+## 1. 模型介绍
 
 BIAM 的线性预测量由四部分组成：
 
@@ -37,7 +37,7 @@ BIAM 的线性预测量由四部分组成：
 
 ## 2. 大论文指定运行环境
 
-大论文“实施细节与超参数配置”及表 3-2 明确指定统一实验环境如下：
+统一实验环境如下：
 
 | 配置项   | 大论文指定值              |
 | -------- | ------------------------- |
@@ -50,7 +50,7 @@ BIAM 的线性预测量由四部分组成：
 
 正式复现实验默认启用 `strict_environment: true`。程序启动时会检查操作系统、CPU、GPU、显存、系统内存、CUDA 和 PyTorch；任何一项不匹配都会在训练开始前终止运行。校验通过后，要求值、实际检测值及正式环境校验状态会写入 `provenance.json`。
 
-大论文没有给出 Python、NumPy、SciPy、pandas 或 scikit-learn 的具体版本。仓库为使依赖可安装，在不改变上述论文环境的前提下补充锁定 Python 3.8.18、NumPy 1.24.4、SciPy 1.10.1、pandas 2.0.3 和 scikit-learn 1.3.2。它们是仓库兼容性配置，不应表述为论文原文指定版本。
+同时Python 3.8.18、NumPy 1.24.4、SciPy 1.10.1、pandas 2.0.3  scikit-learn 1.3.2。
 
 ### 2.1 Conda 配置
 
@@ -157,8 +157,6 @@ python biam_main.py --seeds 101 202 303 404 505
 | `patience`                |       20 | 调参集早停耐心值                                           |
 | `final_refit_steps`       |      100 | 固定结构后的最终重拟合步数                                 |
 
-其中 \(L_h=8\)、\(S=8\)、\(K_{in}=5\)、\(\lambda_0=5\times10^{-4}\) 和门控阈值 0.5 来自 `biam.tex` 的参考配置或公式。论文材料没有为所有任务唯一指定其余数值，因此其余值作为仓库默认配置明确保存，不冒充未给出的论文常量；正式实验应只用调参集确定这些参数，并保存最终配置。
-
 常用命令行覆盖项：
 
 ```bash
@@ -216,7 +214,7 @@ python biam_main.py --dataset npz --data-path dataset.npz --task regression --st
 
 响应均值和标准差只由当前外层折的训练集估计，并写入 `data_run.json`。
 
-CME、ADNI 等带自然缺失的数据可直接在 `X` 中使用 `NaN`。模型最终缺失状态为自然缺失与人工缺失的逻辑并集。临床或受许可限制的原始数据未包含在本仓库中，缺少论文使用的同一原始文件时不能声称精确复现相应表格数值。
+CME、ADNI 等带自然缺失的数据可直接在 `X` 中使用 `NaN`。模型最终缺失状态为自然缺失与人工缺失的逻辑并集。
 
 ### 6.3 缺失机制
 
@@ -280,6 +278,5 @@ python run_tests.py
 - 正式比较必须让所有方法共享完全相同的 `split_indices.npz`、标签/响应异常索引和缺失掩码。
 - 不要在完整数据或测试集上重新估计标准化、中位数、Hinge 结点、候选交互或缺失概率截距。
 - GPU 浮点规约、驱动和底层算子可能导致极小数值差异；代码统一设置 Python、NumPy、CPU/GPU PyTorch 随机状态，并启用确定性算法警告模式。
-- 正式复现保持 `strict_environment: true`，不得使用 `--allow-environment-mismatch` 绕过大论文环境检查。
+- 正式复现保持 `strict_environment: true`，不得使用 `--allow-environment-mismatch` 绕过环境检查。
 - 惰性结构缓存按论文要求不淘汰。高维、长轮次运行时，缓存会随新结构访问增加；`training.json` 会记录每轮缓存规模。
-- 论文报告值还依赖相同原始数据、预处理版本、超参数搜索空间和计算环境。仓库保存了当前运行所需的信息，但不会用缺失的原始数据伪造论文表格结果。
