@@ -1,199 +1,166 @@
-"""
-BIAM Configuration
-Configuration class for BIAM model parameters
-"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
 
 import torch
-from typing import Dict, Any, Optional
+
 
 class BIAMConfig:
-    """
-    Configuration class for BIAM model
-    """
-    
-    def __init__(self, args=None):
-        """
-        Initialize BIAM configuration
-        
-        Args:
-            args: Command line arguments or configuration dictionary
-        """
-        # Default configuration
-        self.task = 'classification'
-        self.dataset = 'synthetic'
-        self.missing_ratio = 0.3
-        self.noise_ratio = 0.2
-        self.imbalance_ratio = 0.15
-        self.upper_lr = 1e-2
-        self.lower_lr = 1e-2
-        self.penalty_coef = 1e-5
-        self.epochs = 10000
-        self.batch_size = 200
-        self.use_wandb = False
-        self.project_name = 'biam-experiments'
-        
-        # Model architecture parameters
-        self.input_dim = 100
+    """BIAM 论文复现实验配置。"""
+
+    def __init__(self, args: Any = None, **overrides: Any):
+        self.task = "regression"
+        self.dataset = "synthetic"
+        self.data_path = None
+        self.target_key = "y"
+        self.input_dim = 50
         self.num_classes = 2
-        self.spline_dim_regression = 3
-        self.spline_dim_classification = 5
+        self.n_samples = 1000
+
+        self.missing_mechanism = "MAR"
+        self.missing_ratio = 0.3
+        self.noise_ratio = 0.3
+        self.noise_type = "gaussian"
+        self.noise_scale = 0.3
+        self.imbalance_ratio = 0.1
+        self.correlation = 0.5
+        self.standardize_target = False
+
+        self.hinge_bins = 8
+        self.structure_samples = 8
+        self.inner_steps = 5
+        self.min_interaction_support = 20
+        self.lambda_l0 = 5e-4
+        self.lambda_l2 = 1e-4
+        self.lambda_kl = 1e-4
+        self.prior_probability = 0.1
+        self.initial_gate_probability = 0.5
+        self.gate_threshold = 0.5
         self.hidden_dim_weighting = 10
-        
-        # Optimization parameters
-        self.momentum = 0.9
-        self.weight_decay = 1e-4
-        self.scheduler_step_size = 1000
-        self.scheduler_gamma = 0.1
-        
-        # Regularization parameters
-        self.regularization_type = 'group_lasso'
-        self.dropout_rate = 0.1
-        
-        # Device configuration
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Logging parameters
-        self.log_interval = 100
-        self.save_interval = 1000
-        self.eval_interval = 100
-        
-        # Data parameters
-        self.num_workers = 0
-        self.pin_memory = True
-        self.shuffle_train = True
-        self.shuffle_val = False
-        
-        # Update with provided arguments
+
+        self.lower_lr = 1e-2
+        self.structure_lr = 1e-2
+        self.weight_lr = 1e-3
+        self.batch_size = 64
+        self.meta_batch_size = 64
+        self.epochs = 200
+        self.patience = 20
+        self.eval_interval = 1
+        self.tune_refit_steps = 10
+        self.final_refit_steps = 100
+        self.gradient_clip = 10.0
+
+        self.seeds = [11, 22, 33, 44, 55]
+        self.regression_outer_folds = 5
+        self.regression_strata = 10
+        self.output_dir = "results/biam"
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.deterministic = True
+        self.strict_environment = True
+
         if args is not None:
-            self._update_from_args(args)
-    
-    def _update_from_args(self, args):
-        """
-        Update configuration from command line arguments
-        
-        Args:
-            args: Command line arguments
-        """
-        if hasattr(args, 'task'):
-            self.task = args.task
-        if hasattr(args, 'dataset'):
-            self.dataset = args.dataset
-        if hasattr(args, 'missing_ratio'):
-            self.missing_ratio = args.missing_ratio
-        if hasattr(args, 'noise_ratio'):
-            self.noise_ratio = args.noise_ratio
-        if hasattr(args, 'imbalance_ratio'):
-            self.imbalance_ratio = args.imbalance_ratio
-        if hasattr(args, 'upper_lr'):
-            self.upper_lr = args.upper_lr
-        if hasattr(args, 'lower_lr'):
-            self.lower_lr = args.lower_lr
-        if hasattr(args, 'penalty_coef'):
-            self.penalty_coef = args.penalty_coef
-        if hasattr(args, 'epochs'):
-            self.epochs = args.epochs
-        if hasattr(args, 'batch_size'):
-            self.batch_size = args.batch_size
-        if hasattr(args, 'use_wandb'):
-            self.use_wandb = args.use_wandb
-        if hasattr(args, 'project_name'):
-            self.project_name = args.project_name
-    
-    def get_spline_dim(self):
-        """
-        Get spline dimension based on task
-        
-        Returns:
-            Spline dimension
-        """
-        if self.task == 'regression':
-            return self.spline_dim_regression
-        else:
-            return self.spline_dim_classification
-    
-    def get_output_dim(self):
-        """
-        Get output dimension based on task
-        
-        Returns:
-            Output dimension
-        """
-        if self.task == 'regression':
+            values = vars(args) if hasattr(args, "__dict__") else dict(args)
+            self._apply(values)
+        self._apply(overrides)
+        self.validate()
+
+    @classmethod
+    def from_yaml(cls, path: str | Path, args: Any = None) -> "BIAMConfig":
+        import yaml
+
+        with Path(path).open("r", encoding="utf-8") as handle:
+            values = yaml.safe_load(handle) or {}
+        config = cls(**values)
+        if args is not None:
+            incoming = vars(args) if hasattr(args, "__dict__") else dict(args)
+            config._apply(incoming)
+            config.validate()
+        return config
+
+    def _apply(self, values: dict[str, Any]) -> None:
+        aliases = {
+            "upper_lr": "structure_lr",
+            "penalty_coef": "lambda_l2",
+            "spline_dim_regression": "hinge_bins",
+            "spline_dim_classification": "hinge_bins",
+        }
+        for key, value in values.items():
+            if value is None:
+                continue
+            target = aliases.get(key, key)
+            if hasattr(self, target):
+                if target == "device" and not isinstance(value, torch.device):
+                    value = torch.device(value)
+                setattr(self, target, value)
+
+    def update(self, **kwargs: Any) -> None:
+        unknown = [key for key in kwargs if not hasattr(self, key)]
+        if unknown:
+            raise ValueError(f"未知配置项: {', '.join(unknown)}")
+        self._apply(kwargs)
+        self.validate()
+
+    @property
+    def upper_lr(self) -> float:
+        return self.structure_lr
+
+    @upper_lr.setter
+    def upper_lr(self, value: float) -> None:
+        self.structure_lr = value
+
+    @property
+    def penalty_coef(self) -> float:
+        return self.lambda_l2
+
+    @penalty_coef.setter
+    def penalty_coef(self, value: float) -> None:
+        self.lambda_l2 = value
+
+    def get_spline_dim(self) -> int:
+        return self.hinge_bins
+
+    def get_output_dim(self) -> int:
+        if self.task == "regression" or self.num_classes == 2:
             return 1
-        else:
-            return self.num_classes
-    
-    def to_dict(self):
-        """
-        Convert configuration to dictionary
-        
-        Returns:
-            Configuration dictionary
-        """
-        config_dict = {}
+        return self.num_classes - 1
+
+    def validate(self) -> None:
+        if self.task not in {"regression", "classification"}:
+            raise ValueError("task 必须是 regression 或 classification")
+        if self.dataset not in {"synthetic", "npz"}:
+            raise ValueError("dataset 必须是 synthetic 或 npz")
+        if self.dataset == "npz" and not self.data_path:
+            raise ValueError("dataset=npz 时必须提供 data_path")
+        if self.missing_mechanism.upper() not in {"MCAR", "MAR", "MNAR", "NONE"}:
+            raise ValueError("missing_mechanism 必须是 NONE、MCAR、MAR 或 MNAR")
+        if not 0 <= self.missing_ratio < 1:
+            raise ValueError("missing_ratio 必须位于 [0, 1)")
+        if not 0 <= self.noise_ratio < 1:
+            raise ValueError("noise_ratio 必须位于 [0, 1)")
+        if not 0 < self.imbalance_ratio <= 1:
+            raise ValueError("imbalance_ratio 必须位于 (0, 1]")
+        if self.structure_samples < 4 or self.structure_samples % 2:
+            raise ValueError("structure_samples 必须是不小于 4 的偶数")
+        if self.inner_steps < 1 or self.hinge_bins < 1:
+            raise ValueError("inner_steps 和 hinge_bins 必须为正整数")
+        if not 0 < self.prior_probability < 0.5:
+            raise ValueError("prior_probability 必须位于 (0, 0.5)")
+        if not 0 < self.gate_threshold < 1:
+            raise ValueError("gate_threshold 必须位于 (0, 1)")
+        if not self.seeds:
+            raise ValueError("至少需要一个随机种子")
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
         for key, value in self.__dict__.items():
-            if not key.startswith('_'):
-                config_dict[key] = value
-        return config_dict
-    
-    def update(self, **kwargs):
-        """
-        Update configuration parameters
-        
-        Args:
-            **kwargs: Parameters to update
-        """
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
+            if isinstance(value, torch.device):
+                result[key] = str(value)
+            elif isinstance(value, Path):
+                result[key] = str(value)
             else:
-                raise ValueError(f"Unknown configuration parameter: {key}")
-    
-    def validate(self):
-        """
-        Validate configuration parameters
-        
-        Raises:
-            ValueError: If configuration is invalid
-        """
-        if self.task not in ['regression', 'classification']:
-            raise ValueError(f"Invalid task: {self.task}")
-        
-        if self.upper_lr <= 0 or self.lower_lr <= 0:
-            raise ValueError("Learning rates must be positive")
-        
-        if self.epochs <= 0:
-            raise ValueError("Number of epochs must be positive")
-        
-        if self.batch_size <= 0:
-            raise ValueError("Batch size must be positive")
-        
-        if not 0 <= self.missing_ratio <= 1:
-            raise ValueError("Missing ratio must be between 0 and 1")
-        
-        if not 0 <= self.noise_ratio <= 1:
-            raise ValueError("Noise ratio must be between 0 and 1")
-        
-        if not 0 <= self.imbalance_ratio <= 1:
-            raise ValueError("Imbalance ratio must be between 0 and 1")
-    
-    def __str__(self):
-        """
-        String representation of configuration
-        
-        Returns:
-            Configuration string
-        """
-        config_str = "BIAM Configuration:\n"
-        for key, value in self.to_dict().items():
-            config_str += f"  {key}: {value}\n"
-        return config_str
-    
-    def __repr__(self):
-        """
-        Representation of configuration
-        
-        Returns:
-            Configuration representation
-        """
+                result[key] = value
+        return result
+
+    def __repr__(self) -> str:
         return f"BIAMConfig({self.to_dict()})"

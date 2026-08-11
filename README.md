@@ -1,298 +1,285 @@
-# BIAM: Bilevel Interactive Additive Model
+# BIAM：面向特征缺失的概率双层交互可加模型
 
-A PyTorch implementation of the Bilevel Interactive Additive Model (BIAM) for handling datasets with missing values, noisy labels, and imbalanced categories.
+本仓库实现论文中的概率双层交互可加模型（Probabilistic Bilevel Interactive Additive Model，BIAM）。代码与 `biam.tex` 的模型定义、联合优化算法和实验协议对齐，并按 `appendix.tex` 的附录三保存环境、随机种子、数据划分索引、扰动记录、早停信息、逐样本预测和汇总指标。本仓库只处理 BIAM，不包含 BATM 的更新。
 
-## Overview
+## 1. 模型与论文的对应关系
 
-BIAM is a novel machine learning framework that addresses three key challenges in real-world datasets:
+BIAM 的线性预测量由四部分组成：
 
-1. **Missing Values**: Explicitly models missing value indicators and their interactions
-2. **Noisy Labels**: Uses a bilevel optimization approach to learn robust sample weights
-3. **Class Imbalance**: Dynamically adjusts sample weights to handle imbalanced data
+\[
+\widehat\eta_i=\beta_0+F_{\mathrm{obs},i}+F_{\mathrm{miss},i}+F_{\mathrm{int},i}.
+\]
 
-## Key Features
+- 观测主效应：训练集中位数仅用于闭合输入，数值效应乘以观测指示，缺失值不会作为真实观测参与响应。
+- 缺失主效应：使用中心化缺失指示 \(m_{ij}-\bar m_j\)。
+- 缺失交互效应：只构造有向项 \(m_{ij}o_{ik}q_{jk}(x_{ik})\)，并按训练集支持度 \(n_{jk}^{MO}\ge n_{\min}\) 筛选候选交互。
+- Hinge 表示：每个结点同时包含正向和反向 Hinge 基；结点、中心化常数、均值、标准差和中位数全部只由训练集估计。
+- 离散结构：每个完整效应组使用 Bernoulli 门控，训练时采样离散结构，部署时按 \(\pi_g\ge0.5\) 得到硬结构。
+- 样本加权：权重网络以逐样本损失为输入、Sigmoid 为输出；下层将当前权重作为损失梯度系数，不引入权重网络对损失输入的额外下层导数。
 
-- **Bilevel Optimization**: Upper-level optimization for sample weighting, lower-level optimization for model parameters
-- **Additive Model Architecture**: Interpretable feature interactions with missing value handling
-- **Advanced Gradient Methods**: Multiple gradient computation strategies for robust optimization
-- **Comprehensive Visualization**: Shape function plots, feature importance, and model interpretation
-- **Extensive Logging**: Integration with wandb, tensorboard, and custom logging systems
+优化器实现以下论文步骤：
 
-## Installation
+1. 使用偶数个反变量 Bernoulli 结构样本；默认 \(S=8\)。
+2. 每轮开始冻结惰性结构缓存的逻辑快照，所有结构从同一轮首状态评价。
+3. 每个结构执行 \(K_{in}-1\) 次普通加权下层更新，再执行一次保留权重网络计算图的虚拟更新；默认 \(K_{in}=5\)。
+4. 结构参数使用排除当前样本及其反变量伙伴的留一对基线和分数函数梯度，并加入期望组数与 Bernoulli KL 正则。
+5. 权重网络使用所有结构共享元风险的一步截断元梯度。
+6. 两个上层模块同步更新后，从同一个 \(\bar\theta\) 使用更新后的权重网络计算实际下层步；同一轮重复结构的结果先平均再写回缓存。
+7. 调参集只用于超参数和早停。训练结束后固定硬结构和权重网络，在训练集与元数据集的并集上重拟合；测试集只在最终模型冻结后评价。
 
-### Requirements
+核心实现位于：
 
-- Python 3.8+
-- PyTorch 2.0+
-- CUDA 11.7+ (for GPU acceleration)
+- `models/biam_additive_model.py`：Hinge 基、三类效应、经验中心化、候选交互与硬结构；
+- `models/biam_weighting_network.py`：损失到样本权重的映射；
+- `gradients/biam_optimizer.py`：反变量结构梯度、截断元梯度、惰性缓存、早停和最终重拟合；
+- `data/biam_data_generator.py`：论文仿真公式、四路划分、缺失机制、标签/响应异常与真实回归外层交叉验证；
+- `biam_main.py`：多随机种子实验和完整复现记录。
 
-### Install Dependencies
+## 2. 大论文指定运行环境
 
-```bash
-pip install -r requirements.txt
-```
+大论文“实施细节与超参数配置”及表 3-2 明确指定统一实验环境如下：
 
-## Quick Start
+| 配置项 | 大论文指定值 |
+|---|---|
+| CPU | Intel Xeon Platinum 8175M |
+| GPU | NVIDIA RTX A6000（48GB） |
+| 内存 | 128GB |
+| 操作系统 | Ubuntu 20.04 LTS |
+| CUDA | 12.1 |
+| PyTorch | 2.1.0 |
 
-### Basic Usage
+正式复现实验默认启用 `strict_environment: true`。程序启动时会检查操作系统、CPU、GPU、显存、系统内存、CUDA 和 PyTorch；任何一项不匹配都会在训练开始前终止运行。校验通过后，要求值、实际检测值及正式环境校验状态会写入 `provenance.json`。
 
-```python
-from biam_main import main
-import argparse
+大论文没有给出 Python、NumPy、SciPy、pandas 或 scikit-learn 的具体版本。仓库为使依赖可安装，在不改变上述论文环境的前提下补充锁定 Python 3.8.18、NumPy 1.24.4、SciPy 1.10.1、pandas 2.0.3 和 scikit-learn 1.3.2。它们是仓库兼容性配置，不应表述为论文原文指定版本。
 
-# Set up arguments
-args = argparse.Namespace(
-    task='classification',
-    dataset='synthetic',
-    missing_ratio=0.3,
-    noise_ratio=0.2,
-    imbalance_ratio=0.15,
-    upper_lr=1e-2,
-    lower_lr=1e-2,
-    penalty_coef=1e-5,
-    epochs=10000,
-    batch_size=200,
-    use_wandb=True,
-    project_name='biam-experiments'
-)
+### 2.1 Conda 配置
 
-# Run training
-main()
-```
-
-### Command Line Interface
+必须在大论文指定的 Ubuntu 20.04、CPU、GPU 和内存硬件上执行：
 
 ```bash
-# Regression task
-python biam_main.py --task regression --dataset synthetic --epochs 5000
-
-# Classification task with wandb logging
-python biam_main.py --task classification --dataset adult --use_wandb --project_name my-experiment
-
-# Custom configuration
-python biam_main.py --task classification --missing_ratio 0.4 --noise_ratio 0.3 --imbalance_ratio 0.1
+conda env create -f environment.yml
+conda activate biam-paper
 ```
 
-## Project Structure
+`environment.yml` 固定 PyTorch 2.1.0 和 `pytorch-cuda=12.1`。
 
-```
-BIAM/
-├── biam_main.py                 # Main entry point
-├── requirements.txt             # Dependencies
-├── README.md                   # This file
-├── data/                       # Data processing modules
-│   ├── __init__.py
-│   ├── biam_data_generator.py  # Synthetic and real data generation
-│   ├── biam_binarizer.py       # Missing value handling and binarization
-│   └── biam_data_utils.py      # Data utility functions
-├── models/                     # Model components
-│   ├── __init__.py
-│   ├── biam_model.py           # Main BIAM model
-│   ├── biam_weighting_network.py # Sample weighting network
-│   └── biam_additive_model.py  # Additive model with interactions
-├── gradients/                  # Optimization algorithms
-│   ├── __init__.py
-│   ├── biam_optimizer.py       # Main optimizer
-│   ├── biam_bilevel_optimizer.py # Advanced bilevel optimization
-│   └── biam_gradient_methods.py # Various gradient methods
-├── utils/                      # Utility classes
-│   ├── __init__.py
-│   ├── biam_config.py          # Configuration management
-│   └── biam_logger.py          # Logging utilities
-├── visualization/              # Visualization tools
-│   ├── __init__.py
-│   ├── biam_visualizer.py      # Main visualizer
-│   └── biam_shape_functions.py # Shape function plots
-└── logs/                       # Training logs and outputs
+### 2.2 Docker 配置
+
+`Dockerfile` 固定 Ubuntu 20.04、CUDA 12.1 和 PyTorch 2.1.0。Docker 不能模拟 CPU、GPU 型号或物理内存，因此宿主机仍必须是大论文中的 Intel Xeon Platinum 8175M、RTX A6000 48GB 和 128GB 内存。
+
+```bash
+docker build -t biam-paper .
+docker run --rm --gpus all \
+  -v "$PWD/results:/workspace/BIAM/results" \
+  biam-paper
 ```
 
-## Model Architecture
+如果只需在其他环境检查代码兼容性，可显式加入 `--allow-environment-mismatch`。此开关只用于测试，`provenance.json` 中的 `formal_environment_validated` 会固定为 `false`，所得时间、显存和预测结果不得声称为大论文环境下的正式复现结果。
 
-### BIAM Framework
+## 3. 快速验证
 
-BIAM consists of two main components:
+先运行缩小后的单种子回归流程，检查环境、训练、测试和结果落盘是否正常：
 
-1. **Weighting Network**: A neural network that learns sample weights based on prediction errors
-2. **Additive Model**: An interpretable model that handles missing values and feature interactions
+```bash
+python biam_main.py --quick --task regression --output-dir results/quick
+```
 
-### Bilevel Optimization
+分类验证：
 
-The optimization process involves two levels:
+```bash
+python biam_main.py --quick --task classification --output-dir results/quick
+```
 
-- **Upper Level**: Optimizes the weighting network parameters to minimize validation loss
-- **Lower Level**: Optimizes the additive model parameters using weighted training loss
+`--quick` 只用于冒烟测试，会缩小样本数、结构样本数、内层步数、训练轮数和随机种子数，其结果不能与论文表格比较。
 
-## Configuration
+在非论文环境中仅检查兼容性时：
 
-### Key Parameters
+```bash
+python biam_main.py --quick --task regression \
+  --allow-environment-mismatch \
+  --output-dir results/quick
+```
 
-- `task`: Task type ('regression' or 'classification')
-- `dataset`: Dataset to use ('synthetic', 'adult', 'credit', 'mnist', 'cifar10')
-- `missing_ratio`: Ratio of missing values (0.0-1.0)
-- `noise_ratio`: Ratio of noisy labels (0.0-1.0)
-- `imbalance_ratio`: Ratio for class imbalance (0.0-1.0)
-- `upper_lr`: Upper level learning rate
-- `lower_lr`: Lower level learning rate
-- `penalty_coef`: Regularization coefficient
-- `epochs`: Number of training epochs
-- `batch_size`: Batch size for training
+## 4. 论文配置实验
 
-### Advanced Configuration
+默认配置在 `configs/biam_default.yaml`。默认使用 5 个独立运行种子：
+
+```yaml
+seeds: [11, 22, 33, 44, 55]
+```
+
+运行默认仿真回归实验：
+
+```bash
+python biam_main.py --config configs/biam_default.yaml
+```
+
+运行仿真分类实验：
+
+```bash
+python biam_main.py \
+  --config configs/biam_default.yaml \
+  --task classification \
+  --noise-ratio 0.2 \
+  --imbalance-ratio 0.1 \
+  --missing-mechanism MAR \
+  --missing-ratio 0.3
+```
+
+也可显式指定 3 至 5 个种子：
+
+```bash
+python biam_main.py --seeds 101 202 303 404 505
+```
+
+同一设置中的所有对比方法应读取 BIAM 输出的 `split_indices.npz` 和 `data_artifacts.npz`，不要分别重新划分数据或生成扰动。论文表格采用 10 次重复时，可传入 10 个种子；本仓库根据当前复现要求默认运行 5 次并报告样本标准差。
+
+## 5. 默认超参数
+
+| 配置项 | 默认值 | 含义 |
+|---|---:|---|
+| `hinge_bins` | 8 | 每条曲线的 Hinge 结点数 \(L_h\)，每个结点含正、反两个基函数 |
+| `structure_samples` | 8 | 反变量结构样本数 \(S\)，必须是不小于 4 的偶数 |
+| `inner_steps` | 5 | 每个候选结构的下层更新步数 \(K_{in}\) |
+| `lambda_l0` | `5e-4` | 预期结构组数量正则 \(\lambda_0\) |
+| `lambda_l2` | `1e-4` | Hinge 与缺失效应系数正则 \(\lambda_2\) |
+| `lambda_kl` | `1e-4` | Bernoulli 结构分布 KL 正则 |
+| `prior_probability` | 0.1 | 稀疏 Bernoulli 先验概率 \(\pi_0\) |
+| `gate_threshold` | 0.5 | 部署硬门控阈值 \(\kappa\) |
+| `min_interaction_support` | 20 | 有向交互的最小训练支持度 \(n_{\min}\) |
+| `noise_scale` | 0.3 | 常规仿真回归基础噪声尺度 \(\sigma_\varepsilon\) |
+| `lower_lr` | `1e-2` | 可加模型更新学习率 \(\eta_\theta\) |
+| `structure_lr` | `1e-2` | 结构分布更新学习率 \(\eta_\phi\) |
+| `weight_lr` | `1e-3` | 权重网络更新学习率 \(\eta_\psi\) |
+| `batch_size` | 64 | 训练批次大小 |
+| `meta_batch_size` | 64 | 元数据批次大小 |
+| `epochs` | 200 | 最大训练轮数 |
+| `patience` | 20 | 调参集早停耐心值 |
+| `final_refit_steps` | 100 | 固定结构后的最终重拟合步数 |
+
+其中 \(L_h=8\)、\(S=8\)、\(K_{in}=5\)、\(\lambda_0=5\times10^{-4}\) 和门控阈值 0.5 来自 `biam.tex` 的参考配置或公式。论文材料没有为所有任务唯一指定其余数值，因此其余值作为仓库默认配置明确保存，不冒充未给出的论文常量；正式实验应只用调参集确定这些参数，并保存最终配置。
+
+常用命令行覆盖项：
+
+```bash
+python biam_main.py \
+  --hinge-bins 12 \
+  --structure-samples 8 \
+  --inner-steps 5 \
+  --epochs 200 \
+  --patience 20 \
+  --device cuda
+```
+
+## 6. 数据划分协议
+
+### 6.1 仿真数据
+
+每个种子独立生成完整数据，并按照 7:1:1:1 划分：
+
+- `train`：下层加权拟合；
+- `meta`：更新结构分布和权重网络；
+- `tune`：选择超参数和早停位置；
+- `test`：最终冻结模型后评价。
+
+分类任务按类别分层；回归任务按无噪条件响应的秩分位组分层。默认仿真输入满足 \(X\sim N(0,\Sigma)\)、\(\Sigma_{jk}=0.5^{|j-k|}\)，响应和判别函数与 `biam.tex` 中的回归、分类仿真公式一致。
+
+标签翻转、类别长尾下采样、基础回归噪声和响应异常只作用于训练集。仿真分类按 \(|g_i|\) 从小到大选择最靠近决策边界的训练样本翻转；外部分类数据采用对称随机翻转。元数据集、调参集和测试集使用干净目标。测试回归指标使用无异常条件响应。
+
+### 6.2 真实或外部数据
+
+外部数据使用 NPZ：
 
 ```python
-from utils.biam_config import BIAMConfig
+import numpy as np
 
-config = BIAMConfig()
-config.update(
-    task='classification',
-    missing_ratio=0.3,
-    noise_ratio=0.2,
-    imbalance_ratio=0.15,
-    upper_lr=1e-2,
-    lower_lr=1e-2,
-    penalty_coef=1e-5,
-    epochs=10000,
-    batch_size=200
-)
+np.savez("dataset.npz", X=X, y=y)
 ```
 
-## Data Generation
+分类任务：
 
-## Visualization
-
-### Training Curves
-
-```python
-from visualization.biam_visualizer import BIAMVisualizer
-
-visualizer = BIAMVisualizer(config)
-visualizer.plot_training_curves(training_history)
+```bash
+python biam_main.py \
+  --dataset npz \
+  --data-path dataset.npz \
+  --task classification \
+  --num-classes 3
 ```
 
-### Feature Importance
+分类数据采用独立重复的 7:1:1:1 分层随机划分。回归数据采用 5 折外层交叉验证：每次留 1 折作为测试集，其余样本再按 7:1:1 划分为训练、元数据和调参集。程序先在一个种子的 5 个外层折上取指标平均，再跨种子计算均值和标准差，与论文附录三的汇总顺序一致。
 
-```python
-feature_importance = model.get_feature_importance()
-visualizer.plot_feature_importance(feature_importance, feature_names)
+Boston Housing、Plasma Retinol 等需要按训练集统计量标准化响应的任务使用：
+
+```bash
+python biam_main.py --dataset npz --data-path dataset.npz --task regression --standardize-target
 ```
 
-### Shape Functions
+响应均值和标准差只由当前外层折的训练集估计，并写入 `data_run.json`。
 
-```python
-from visualization.biam_shape_functions import BIAMShapeFunctions
+CME、ADNI 等带自然缺失的数据可直接在 `X` 中使用 `NaN`。模型最终缺失状态为自然缺失与人工缺失的逻辑并集。临床或受许可限制的原始数据未包含在本仓库中，缺少论文使用的同一原始文件时不能声称精确复现相应表格数值。
 
-shape_plotter = BIAMShapeFunctions(config)
-shape_plotter.plot_shape_functions(model, data, feature_names)
+### 6.3 缺失机制
+
+人工缺失只作用于原本可观测的单元：
+
+- 仿真数据候选特征为前一半特征；
+- 外部数据由每个外层划分种子固定选择 `ceil(0.3 * p)` 个候选特征；
+- MCAR 使用固定候选单元概率；
+- MAR 使用不被人工遮蔽的锚点特征，斜率固定为 1.5；
+- MNAR 使用当前特征的潜在标准化值，斜率绝对值固定为 1.5；
+- MAR/MNAR 截距只在训练集上用二分法校准，随后冻结并应用于四个子集。
+
+标准化统计量、中位数、Hinge 结点、效应中心化常数和候选交互也全部只由最终训练集估计。
+
+## 7. 结果与复现文件
+
+一次默认运行的目录结构如下：
+
+```text
+results/biam/regression_synthetic/
+├── config.json
+├── provenance.json
+├── summary.json
+└── seed_11/
+    ├── seed_summary.json
+    └── fold_0/
+        ├── split_indices.npz
+        ├── data_artifacts.npz
+        ├── preprocessing.npz
+        ├── data_run.json
+        ├── training.json
+        ├── metrics.json
+        ├── predictions.csv
+        └── model.pt
 ```
 
-## Logging and Monitoring
+文件说明：
 
-### Wandb Integration
+- `config.json`：实际完整超参数和种子列表；
+- `provenance.json`：论文环境逐项校验、实际软硬件、Python/NumPy 版本、Git 提交及工作区状态；
+- `split_indices.npz`：训练、元数据、调参和测试样本的原始索引；
+- `data_artifacts.npz`：人工/自然缺失掩码、候选特征、MAR 锚点、MNAR 方向、校准截距、标签翻转或响应异常索引；
+- `preprocessing.npz`：训练集中位数、均值、标准差、Hinge 结点、中心化常数、候选交互和支持度；
+- `training.json`：早停轮数、逐轮训练/调参损失、缓存规模、最终结构概率和选择组；
+- `predictions.csv`：测试样本原始索引、真实目标、逐样本预测及分类概率；
+- `summary.json`：各随机种子的指标值、均值和样本标准差；
+- `model.pt`：冻结后的模型、权重网络、结构参数和训练记录。
 
-```python
-# Enable wandb logging
-python biam_main.py --use_wandb --project_name my-biam-experiment
+回归默认报告 MSE 与 \(R^2\)，分类默认报告 Accuracy 与 Macro-F1。测试集不参与早停、结构筛选、权重网络更新或最终参数重拟合。
+
+## 8. 测试
+
+```bash
+python run_tests.py
 ```
 
-### Custom Logging
+测试覆盖四路索引互斥与复现、训练集专属扰动、缺失率校准、长尾和标签噪声、主效应/交互经验中心化、有向支持度筛选、硬组门控、反变量留一对基线，以及多种子完整结果落盘。
 
-```python
-from utils.biam_logger import BIAMLogger
+## 9. 复现注意事项
 
-logger = BIAMLogger(config)
-logger.log_metrics(epoch, train_metrics, test_metrics)
-logger.log_feature_importance(feature_importance)
-```
-
-## Advanced Features
-
-### Multiple Gradient Methods
-
-BIAM supports various gradient computation methods:
-
-- Hypergradient computation
-- Implicit differentiation
-- Forward-mode differentiation
-- Second-order gradients
-- Meta-gradient computation
-
-### Regularization Strategies
-
-- Group Lasso regularization
-- L1/L2 regularization
-- Entropy regularization for weight diversity
-- Gradient clipping and noise
-
-### Model Interpretation
-
-- Feature importance analysis
-- Missing value indicator analysis
-- Feature interaction visualization
-- Model complexity analysis
-
-## Performance Optimization
-
-### GPU Acceleration
-
-```python
-# Automatic GPU detection
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-```
-
-### Memory Optimization
-
-- Gradient checkpointing
-- Mixed precision training
-- Efficient data loading
-
-## Examples
-
-### Regression Example
-
-```python
-# Generate synthetic regression data
-config = BIAMConfig()
-config.task = 'regression'
-config.missing_ratio = 0.2
-config.noise_ratio = 0.1
-
-generator = BIAMDataGenerator(config)
-train_loader, val_loader, test_data = generator.generate_data()
-
-# Train model
-model = BIAMModel(config, device)
-optimizer = BIAMOptimizer(config, model, weighting_network)
-
-for epoch in range(config.epochs):
-    train_metrics = optimizer.train_epoch(train_loader, val_loader, epoch)
-    if epoch % 100 == 0:
-        test_metrics = optimizer.evaluate(test_data)
-        print(f"Epoch {epoch}: Test RMSE = {test_metrics['rmse']:.4f}")
-```
-
-### Classification Example
-
-```python
-# Generate synthetic classification data with imbalance
-config = BIAMConfig()
-config.task = 'classification'
-config.imbalance_ratio = 0.1
-config.noise_ratio = 0.3
-
-generator = BIAMDataGenerator(config)
-train_loader, val_loader, test_data = generator.generate_data()
-
-# Train model
-model = BIAMModel(config, device)
-optimizer = BIAMOptimizer(config, model, weighting_network)
-
-for epoch in range(config.epochs):
-    train_metrics = optimizer.train_epoch(train_loader, val_loader, epoch)
-    if epoch % 100 == 0:
-        test_metrics = optimizer.evaluate(test_data)
-        print(f"Epoch {epoch}: Test Accuracy = {test_metrics['accuracy']:.4f}")
-```
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- 正式比较必须让所有方法共享完全相同的 `split_indices.npz`、标签/响应异常索引和缺失掩码。
+- 不要在完整数据或测试集上重新估计标准化、中位数、Hinge 结点、候选交互或缺失概率截距。
+- GPU 浮点规约、驱动和底层算子可能导致极小数值差异；代码统一设置 Python、NumPy、CPU/GPU PyTorch 随机状态，并启用确定性算法警告模式。
+- 正式复现保持 `strict_environment: true`，不得使用 `--allow-environment-mismatch` 绕过大论文环境检查。
+- 惰性结构缓存按论文要求不淘汰。高维、长轮次运行时，缓存会随新结构访问增加；`training.json` 会记录每轮缓存规模。
+- 论文报告值还依赖相同原始数据、预处理版本、超参数搜索空间和计算环境。仓库保存了当前运行所需的信息，但不会用缺失的原始数据伪造论文表格结果。

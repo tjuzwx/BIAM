@@ -1,0 +1,43 @@
+task: regression
+dataset: synthetic
+input_dim: 50
+n_samples: 1000
+missing_mechanism: MAR
+missing_ratio: 0.3
+noise_ratio: 0.3
+noise_type: gaussian
+noise_scale: 0.3
+imbalance_ratio: 0.1
+correlation: 0.5
+standardize_target: false
+
+hinge_bins: 8
+structure_samples: 8
+inner_steps: 5
+min_interaction_support: 20
+lambda_l0: 0.0005
+lambda_l2: 0.0001
+lambda_kl: 0.0001
+prior_probability: 0.1
+initial_gate_probability: 0.5
+gate_threshold: 0.5
+hidden_dim_weighting: 10
+
+lower_lr: 0.01
+structure_lr: 0.01
+weight_lr: 0.001
+batch_size: 64
+meta_batch_size: 64
+epochs: 200
+patience: 20
+eval_interval: 1
+tune_refit_steps: 10
+final_refit_steps: 100
+gradient_clip: 10.0
+
+seeds: [11, 22, 33, 44, 55]
+regression_outer_folds: 5
+regression_strata: 10
+output_dir: results/biam
+deterministic: true
+strict_environment: true

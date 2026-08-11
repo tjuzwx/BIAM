@@ -1,353 +1,119 @@
-"""
-Unit tests for BIAM data processing components
-"""
-
-import unittest
-import torch
 import numpy as np
-import pandas as pd
-import sys
-import os
-
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.biam_data_generator import BIAMDataGenerator
-from data.biam_binarizer import BIAMBinarizer
-from data.biam_dataset_loader import BIAMDatasetLoader
 from utils.biam_config import BIAMConfig
+from utils.biam_environment import PAPER_ENVIRONMENT, validate_paper_environment
 
-class TestBIAMData(unittest.TestCase):
-    """
-    Test cases for BIAM data processing components
-    """
-    
-    def setUp(self):
-        """
-        Set up test fixtures
-        """
-        self.config = BIAMConfig()
-        self.config.task = 'classification'
-        self.config.dataset = 'synthetic'
-        self.config.missing_ratio = 0.3
-        self.config.noise_ratio = 0.2
-        self.config.imbalance_ratio = 0.15
-        self.config.batch_size = 32
-        self.config.device = torch.device('cpu')
-    
-    def test_data_generator_initialization(self):
-        """
-        Test BIAM data generator initialization
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        self.assertEqual(generator.task, self.config.task)
-        self.assertEqual(generator.dataset, self.config.dataset)
-        self.assertEqual(generator.missing_ratio, self.config.missing_ratio)
-        self.assertEqual(generator.noise_ratio, self.config.noise_ratio)
-        self.assertEqual(generator.imbalance_ratio, self.config.imbalance_ratio)
-    
-    def test_synthetic_regression_data(self):
-        """
-        Test synthetic regression data generation
-        """
-        config = BIAMConfig()
-        config.task = 'regression'
-        config.dataset = 'synthetic'
-        config.batch_size = 32
-        config.device = torch.device('cpu')
-        
-        generator = BIAMDataGenerator(config)
-        train_loader, val_loader, test_data = generator.generate_data()
-        
-        # Test data loaders
-        self.assertIsNotNone(train_loader)
-        self.assertIsNotNone(val_loader)
-        self.assertIsNotNone(test_data)
-        
-        # Test batch structure
-        for data, target in train_loader:
-            self.assertEqual(data.shape[0], config.batch_size)
-            self.assertEqual(target.shape[0], config.batch_size)
-            break
-    
-    def test_synthetic_classification_data(self):
-        """
-        Test synthetic classification data generation
-        """
-        generator = BIAMDataGenerator(self.config)
-        train_loader, val_loader, test_data = generator.generate_data()
-        
-        # Test data loaders
-        self.assertIsNotNone(train_loader)
-        self.assertIsNotNone(val_loader)
-        self.assertIsNotNone(test_data)
-        
-        # Test batch structure
-        for data, target in train_loader:
-            self.assertEqual(data.shape[0], self.config.batch_size)
-            self.assertEqual(target.shape[0], self.config.batch_size)
-            break
-    
-    def test_missing_value_generation(self):
-        """
-        Test missing value generation
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        # Test missing value addition
-        X = np.random.randn(100, 10)
-        X_with_missing = generator._add_missing_values(X, missing_ratio=0.3)
-        
-        # Check that missing values were added
-        missing_count = np.isnan(X_with_missing).sum()
-        self.assertGreater(missing_count, 0)
-    
-    def test_label_noise_generation(self):
-        """
-        Test label noise generation
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        # Test label noise addition
-        y = np.random.randint(0, 2, 100)
-        y_noisy = generator._add_label_noise(y, noise_ratio=0.2)
-        
-        # Check that some labels were flipped
-        noise_count = np.sum(y != y_noisy)
-        self.assertGreater(noise_count, 0)
-    
-    def test_class_imbalance_generation(self):
-        """
-        Test class imbalance generation
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        # Test class imbalance
-        y = np.random.randint(0, 2, 1000)
-        imbalanced_indices = generator._create_class_imbalance(y, imbalance_ratio=0.1)
-        
-        # Check that imbalance was created
-        imbalanced_y = y[imbalanced_indices]
-        class_counts = np.bincount(imbalanced_y.astype(int))
-        self.assertLess(class_counts[0], class_counts[1])  # Class 0 should be minority
-    
-    def test_binarizer_initialization(self):
-        """
-        Test BIAM binarizer initialization
-        """
-        binarizer = BIAMBinarizer()
-        
-        self.assertIsNotNone(binarizer.quantiles)
-        self.assertIsNotNone(binarizer.miss_vals)
-        self.assertTrue(binarizer.specific_mi_intercept)
-        self.assertTrue(binarizer.specific_mi_ixn)
-    
-    def test_binarizer_basic_functionality(self):
-        """
-        Test basic binarizer functionality
-        """
-        binarizer = BIAMBinarizer()
-        
-        # Create test data
-        train_df = pd.DataFrame({
-            'feature1': np.random.randn(100),
-            'feature2': np.random.randn(100),
-            'label': np.random.randint(0, 2, 100)
-        })
-        
-        test_df = pd.DataFrame({
-            'feature1': np.random.randn(50),
-            'feature2': np.random.randn(50),
-            'label': np.random.randint(0, 2, 50)
-        })
-        
-        # Test binarization
-        result = binarizer.binarize_and_augment(train_df, test_df)
-        
-        self.assertEqual(len(result), 4)  # Should return 4 arrays
-        train_aug, test_aug, train_labels, test_labels = result
-        
-        self.assertEqual(train_aug.shape[0], 100)
-        self.assertEqual(test_aug.shape[0], 50)
-        self.assertEqual(train_labels.shape[0], 100)
-        self.assertEqual(test_labels.shape[0], 50)
-    
-    def test_binarizer_with_missing_values(self):
-        """
-        Test binarizer with missing values
-        """
-        binarizer = BIAMBinarizer()
-        
-        # Create data with missing values
-        train_df = pd.DataFrame({
-            'feature1': [1, 2, np.nan, 4, 5],
-            'feature2': [1, np.nan, 3, 4, 5],
-            'label': [0, 1, 0, 1, 0]
-        })
-        
-        test_df = pd.DataFrame({
-            'feature1': [1, 2, 3],
-            'feature2': [1, 2, np.nan],
-            'label': [0, 1, 0]
-        })
-        
-        # Test binarization with missing values
-        result = binarizer.binarize_and_augment(train_df, test_df)
-        
-        self.assertEqual(len(result), 4)
-        train_aug, test_aug, train_labels, test_labels = result
-        
-        # Should have additional columns for missing indicators
-        self.assertGreater(train_aug.shape[1], 2)
-        self.assertGreater(test_aug.shape[1], 2)
-    
-    def test_dataset_loader_initialization(self):
-        """
-        Test BIAM dataset loader initialization
-        """
-        loader = BIAMDatasetLoader(self.config)
-        
-        self.assertEqual(loader.config, self.config)
-        self.assertTrue(os.path.exists(loader.data_dir))
-    
-    def test_dataset_loader_available_datasets(self):
-        """
-        Test available datasets list
-        """
-        loader = BIAMDatasetLoader(self.config)
-        available_datasets = loader.get_available_datasets()
-        
-        expected_datasets = ['synthetic', 'adult', 'credit', 'breast_cancer', 'wine', 'iris', 'custom']
-        self.assertEqual(available_datasets, expected_datasets)
-    
-    def test_breast_cancer_dataset_loading(self):
-        """
-        Test breast cancer dataset loading
-        """
-        loader = BIAMDatasetLoader(self.config)
-        
-        try:
-            train_loader, val_loader, test_data = loader.load_breast_cancer_dataset(
-                missing_ratio=0.1, noise_ratio=0.1
-            )
-            
-            # Test data loaders
-            self.assertIsNotNone(train_loader)
-            self.assertIsNotNone(val_loader)
-            self.assertIsNotNone(test_data)
-            
-            # Test batch structure
-            for data, target in train_loader:
-                self.assertEqual(data.shape[0], self.config.batch_size)
-                self.assertEqual(target.shape[0], self.config.batch_size)
-                break
-                
-        except Exception as e:
-            # If dataset loading fails, test fallback
-            self.assertIsInstance(e, Exception)
-    
-    def test_wine_dataset_loading(self):
-        """
-        Test wine dataset loading
-        """
-        loader = BIAMDatasetLoader(self.config)
-        
-        try:
-            train_loader, val_loader, test_data = loader.load_wine_dataset(
-                missing_ratio=0.1, noise_ratio=0.1
-            )
-            
-            # Test data loaders
-            self.assertIsNotNone(train_loader)
-            self.assertIsNotNone(val_loader)
-            self.assertIsNotNone(test_data)
-            
-        except Exception as e:
-            # If dataset loading fails, test fallback
-            self.assertIsInstance(e, Exception)
-    
-    def test_iris_dataset_loading(self):
-        """
-        Test iris dataset loading
-        """
-        loader = BIAMDatasetLoader(self.config)
-        
-        try:
-            train_loader, val_loader, test_data = loader.load_iris_dataset(
-                missing_ratio=0.1, noise_ratio=0.1
-            )
-            
-            # Test data loaders
-            self.assertIsNotNone(train_loader)
-            self.assertIsNotNone(val_loader)
-            self.assertIsNotNone(test_data)
-            
-        except Exception as e:
-            # If dataset loading fails, test fallback
-            self.assertIsInstance(e, Exception)
-    
-    def test_fallback_dataset_loading(self):
-        """
-        Test fallback dataset loading
-        """
-        loader = BIAMDatasetLoader(self.config)
-        train_loader, val_loader, test_data = loader._load_fallback_dataset()
-        
-        # Test data loaders
-        self.assertIsNotNone(train_loader)
-        self.assertIsNotNone(val_loader)
-        self.assertIsNotNone(test_data)
-        
-        # Test batch structure
-        for data, target in train_loader:
-            self.assertEqual(data.shape[0], self.config.batch_size)
-            self.assertEqual(target.shape[0], self.config.batch_size)
-            break
-    
-    def test_data_standardization(self):
-        """
-        Test data standardization
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        # Test standardization
-        X_train = np.random.randn(100, 10)
-        X_val = np.random.randn(50, 10)
-        X_test = np.random.randn(50, 10)
-        
-        X_train_scaled, X_val_scaled, X_test_scaled, scaler = generator._standardize_data(
-            X_train, X_val, X_test
-        )
-        
-        # Check that data was standardized
-        self.assertAlmostEqual(X_train_scaled.mean(), 0, places=5)
-        self.assertAlmostEqual(X_train_scaled.std(), 1, places=5)
-        
-        # Check that scaler was fitted on training data
-        self.assertIsNotNone(scaler)
-    
-    def test_data_loader_creation(self):
-        """
-        Test data loader creation
-        """
-        generator = BIAMDataGenerator(self.config)
-        
-        # Test data loader creation
-        X = np.random.randn(100, 10)
-        y = np.random.randint(0, 2, 100)
-        
-        loader = generator._create_data_loader(X, y, batch_size=16)
-        
-        # Test loader properties
-        self.assertIsNotNone(loader)
-        self.assertEqual(loader.batch_size, 16)
-        
-        # Test batch iteration
-        for data, target in loader:
-            self.assertEqual(data.shape[0], 16)
-            self.assertEqual(target.shape[0], 16)
-            break
 
-if __name__ == '__main__':
-    unittest.main()
+def small_config(**overrides):
+    values = {
+        "task": "regression",
+        "input_dim": 8,
+        "n_samples": 200,
+        "missing_mechanism": "MAR",
+        "missing_ratio": 0.3,
+        "noise_ratio": 0.2,
+        "min_interaction_support": 3,
+        "seeds": [11],
+    }
+    values.update(overrides)
+    return BIAMConfig(**values)
+
+
+def test_environment_report_uses_paper_requirements():
+    report = validate_paper_environment(strict=False)
+
+    assert report["paper_required"] == PAPER_ENVIRONMENT
+    assert set(report["checks"]) == {
+        "Ubuntu 20.04 LTS",
+        "Intel Xeon Platinum 8175M",
+        "NVIDIA RTX A6000",
+        "GPU 48GB",
+        "内存 128GB",
+        "CUDA 12.1",
+        "PyTorch 2.1.0",
+    }
+    assert report["matched"] == all(report["checks"].values())
+    assert report["strict_validation"] is False
+    assert report["formal_environment_validated"] is False
+
+
+def test_four_way_split_is_disjoint_and_reproducible():
+    config = small_config()
+    first = BIAMDataGenerator(config).generate_data(11)
+    second = BIAMDataGenerator(config).generate_data(11)
+    combined = np.concatenate(list(first.indices.values()))
+
+    assert len(first.indices["train"]) == 140
+    assert len(first.indices["meta"]) == 20
+    assert len(first.indices["tune"]) == 20
+    assert len(first.indices["test"]) == 20
+    assert len(np.unique(combined)) == 200
+    for name in first.indices:
+        np.testing.assert_array_equal(first.indices[name], second.indices[name])
+    np.testing.assert_array_equal(
+        first.artifacts["artificial_missing_mask"],
+        second.artifacts["artificial_missing_mask"],
+    )
+
+
+def test_corruption_only_changes_training_targets():
+    bundle = BIAMDataGenerator(small_config()).generate_data(11)
+    changed = np.flatnonzero(bundle.y_train != bundle.y_train_clean)
+
+    assert 10 <= len(bundle.artifacts["response_outlier_local_indices"]) <= 50
+    assert len(changed) > 0
+    assert np.isfinite(bundle.y_meta).all()
+    assert np.isfinite(bundle.y_tune).all()
+    assert np.isfinite(bundle.y_test).all()
+
+
+def test_missing_calibration_uses_candidate_features_only():
+    bundle = BIAMDataGenerator(small_config()).generate_data(11)
+    mask = bundle.artifacts["artificial_missing_mask"]
+    candidates = bundle.artifacts["candidate_features"]
+    train = bundle.indices["train"]
+    outside = np.setdiff1d(np.arange(mask.shape[1]), candidates)
+
+    assert abs(mask[np.ix_(train, candidates)].mean() - 0.3) < 0.08
+    assert not mask[:, outside].any()
+    assert np.all(bundle.artifacts["mar_anchors"] >= len(candidates))
+
+
+def test_classification_training_split_is_long_tailed_and_noisy():
+    config = small_config(task="classification", imbalance_ratio=0.2, noise_ratio=0.1)
+    bundle = BIAMDataGenerator(config).generate_data(11)
+    counts = np.bincount(bundle.y_train_clean.astype(int))
+    selected = bundle.artifacts["label_noise_local_indices"]
+    distances = np.abs(bundle.artifacts["classification_boundary_scores"])
+
+    assert counts.min() / counts.max() <= 0.3
+    assert len(selected) == int(0.1 * len(bundle.y_train))
+    assert distances[selected].max() <= np.partition(distances, len(selected) - 1)[len(selected) - 1]
+    assert set(np.unique(bundle.y_meta)) == {0, 1}
+
+
+def test_external_regression_uses_outer_folds_and_training_target_statistics(tmp_path):
+    rng = np.random.default_rng(7)
+    X = rng.normal(size=(100, 6))
+    y = 3.0 + 2.0 * X[:, 0] + rng.normal(scale=0.1, size=100)
+    path = tmp_path / "regression.npz"
+    np.savez(path, X=X, y=y)
+    config = small_config(
+        dataset="npz",
+        data_path=str(path),
+        standardize_target=True,
+        missing_mechanism="NONE",
+        regression_outer_folds=5,
+    )
+    bundles = BIAMDataGenerator(config).generate_runs(11)
+
+    assert len(bundles) == 5
+    np.testing.assert_array_equal(
+        np.sort(np.concatenate([bundle.indices["test"] for bundle in bundles])),
+        np.arange(100),
+    )
+    for bundle in bundles:
+        assert abs(bundle.y_train_clean.mean()) < 1e-10
+        assert abs(bundle.y_train_clean.std() - 1.0) < 1e-10
+        assert bundle.artifacts["target_std"] > 0

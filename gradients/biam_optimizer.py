@@ -1,332 +1,388 @@
-"""
-BIAM Optimizer
-Main optimizer class for BIAM bilevel optimization
-"""
+from __future__ import annotations
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from typing import Dict, Any, Tuple, List
+import copy
+import math
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
 import numpy as np
-from sklearn.metrics import accuracy_score, mean_squared_error, f1_score
+import torch
+import torch.nn.functional as F
+from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, r2_score
+
 
 class BIAMOptimizer:
-    """
-    Main optimizer for BIAM model implementing bilevel optimization
-    """
-    
-    def __init__(self, config, biam_model, weighting_network):
-        """
-        Initialize BIAM optimizer
-        
-        Args:
-            config: BIAM configuration
-            biam_model: BIAM model instance
-            weighting_network: Weighting network instance
-        """
+    """论文算法 1 的反变量结构采样与截断双层更新。"""
+
+    def __init__(self, config, biam_model, weighting_network=None):
         self.config = config
         self.biam_model = biam_model
-        self.weighting_network = weighting_network
-        self.device = config.device if hasattr(config, 'device') else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Optimization parameters
-        self.upper_lr = config.upper_lr
-        self.lower_lr = config.lower_lr
-        self.penalty_coef = config.penalty_coef
-        
-        # Initialize optimizers
-        self._initialize_optimizers()
-        
-        # Training history
-        self.training_history = {
-            'train_loss': [],
-            'val_loss': [],
-            'test_metrics': []
+        self.model = biam_model.additive_model
+        self.weighting_network = weighting_network or biam_model.weighting_network
+        self.biam_model.weighting_network = self.weighting_network
+        self.device = torch.device(config.device)
+        self.cache: dict[tuple[int, ...], torch.Tensor] = {}
+        self.training_history: dict[str, list] = {
+            "epoch": [],
+            "train_loss": [],
+            "tune_loss": [],
+            "selected_group_ratio": [],
+            "cache_size": [],
         }
-    
-    def _initialize_optimizers(self):
-        """
-        Initialize optimizers for upper and lower level problems
-        """
-        # Upper level optimizer (for weighting network)
-        self.upper_optimizer = optim.SGD(
-            self.weighting_network.parameters(),
-            lr=self.upper_lr,
-            momentum=0.9
-        )
-        
-        # Lower level optimizer (for additive model)
-        self.lower_optimizer = optim.SGD(
-            self.biam_model.additive_model.parameters(),
-            lr=self.lower_lr,
-            momentum=0.9
-        )
-    
-    def train_epoch(self, train_loader, val_loader, epoch):
-        """
-        Train for one epoch using bilevel optimization
-        
-        Args:
-            train_loader: Training data loader
-            val_loader: Validation data loader
-            epoch: Current epoch number
-            
-        Returns:
-            Dictionary with training metrics
-        """
-        self.biam_model.train()
-        self.weighting_network.train()
-        
-        total_train_loss = 0.0
-        total_val_loss = 0.0
-        num_batches = 0
-        
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(self.device), target.to(self.device)
-            
-            # Bilevel optimization steps
-            train_loss = self._bilevel_optimization_step(data, target, val_loader, epoch)
-            total_train_loss += train_loss
-            num_batches += 1
-        
-        # Calculate average losses
-        avg_train_loss = total_train_loss / num_batches
-        
-        # Evaluate on validation set
-        val_loss = self._evaluate_validation(val_loader)
-        
-        # Store metrics
-        self.training_history['train_loss'].append(avg_train_loss)
-        self.training_history['val_loss'].append(val_loss)
-        
-        return {
-            'loss': avg_train_loss,
-            'val_loss': val_loss
+        self.early_stopping: dict[str, Any] = {}
+        self.structure_logits: torch.nn.Parameter | None = None
+        self._rng: np.random.Generator | None = None
+
+    def fit(self, bundle, seed: int) -> dict[str, Any]:
+        self.cache.clear()
+        for values in self.training_history.values():
+            values.clear()
+        self.early_stopping = {}
+        self.model.fit_preprocessor(bundle.X_train)
+        designs = {
+            "train": self.model.design(bundle.X_train),
+            "meta": self.model.design(bundle.X_meta),
+            "tune": self.model.design(bundle.X_tune),
         }
-    
-    def _bilevel_optimization_step(self, train_data, train_target, val_loader, epoch):
-        """
-        Single step of bilevel optimization
-        
-        Args:
-            train_data: Training data batch
-            train_target: Training targets
-            val_loader: Validation data loader
-            epoch: Current epoch
-            
-        Returns:
-            Training loss
-        """
-        # Step 1: Update lower level parameters (additive model)
-        meta_model = self._create_meta_model()
-        meta_model.load_state_dict(self.biam_model.additive_model.state_dict())
-        
-        # Forward pass through meta model
-        meta_predictions = meta_model(train_data)
-        
-        # Calculate weighted loss
-        if self.config.task == 'regression':
-            meta_losses = F.mse_loss(meta_predictions, train_target, reduction='none')
-        else:
-            meta_losses = F.cross_entropy(meta_predictions, train_target.long(), reduction='none')
-        
-        meta_losses = meta_losses.unsqueeze(1)
-        
-        # Get weights from weighting network
-        weights = self.weighting_network(meta_losses.detach())
-        
-        # Weighted loss
-        weighted_loss = torch.mean(meta_losses * weights)
-        
-        # Compute gradients for meta model
-        meta_grads = torch.autograd.grad(
-            weighted_loss, meta_model.parameters(), create_graph=True
+        targets = {
+            "train": self._target_tensor(bundle.y_train),
+            "meta": self._target_tensor(bundle.y_meta),
+            "tune": self._target_tensor(bundle.y_tune),
+        }
+        group_count = len(self.model.builder.groups)
+        initial = np.log(
+            self.config.initial_gate_probability / (1.0 - self.config.initial_gate_probability)
         )
-        
-        # Update meta model parameters
-        self._update_meta_model(meta_model, meta_grads)
-        
-        # Step 2: Update upper level parameters (weighting network)
-        val_data, val_target = next(iter(val_loader))
-        val_data, val_target = val_data.to(self.device), val_target.to(self.device)
-        
-        # Forward pass through updated meta model
-        val_predictions = meta_model(val_data)
-        
-        # Validation loss
-        if self.config.task == 'regression':
-            val_loss = F.mse_loss(val_predictions, val_target)
-        else:
-            val_loss = F.cross_entropy(val_predictions, val_target.long())
-        
-        # Update weighting network
-        self.upper_optimizer.zero_grad()
-        val_loss.backward()
-        self.upper_optimizer.step()
-        
-        # Step 3: Update main model parameters
-        main_predictions = self.biam_model.additive_model(train_data)
-        
-        if self.config.task == 'regression':
-            main_losses = F.mse_loss(main_predictions, train_target, reduction='none')
-        else:
-            main_losses = F.cross_entropy(main_predictions, train_target.long(), reduction='none')
-        
-        main_losses = main_losses.unsqueeze(1)
-        
-        # Get updated weights
-        with torch.no_grad():
-            updated_weights = self.weighting_network(main_losses)
-        
-        # Normalize weights
-        if updated_weights.sum() > 0:
-            updated_weights = updated_weights / updated_weights.sum() * updated_weights.size(0)
-        
-        # Weighted loss for main model
-        main_weighted_loss = torch.mean(main_losses * updated_weights)
-        
-        # Add regularization
-        reg_loss = self.biam_model.additive_model.compute_regularization_loss('group_lasso')
-        total_loss = main_weighted_loss + self.penalty_coef * reg_loss
-        
-        # Update main model
-        self.lower_optimizer.zero_grad()
-        total_loss.backward()
-        self.lower_optimizer.step()
-        
-        return total_loss.item()
-    
-    def _create_meta_model(self):
-        """
-        Create a copy of the additive model for meta-learning
-        """
-        from models.biam_additive_model import BIAMAdditiveModel
-        meta_model = BIAMAdditiveModel(self.config, self.device)
-        return meta_model
-    
-    def _update_meta_model(self, meta_model, grads):
-        """
-        Update meta model parameters using gradients
-        
-        Args:
-            meta_model: Meta model to update
-            grads: Gradients for parameters
-        """
-        for param, grad in zip(meta_model.parameters(), grads):
-            param.data = param.data - self.lower_lr * grad
-    
-    def _evaluate_validation(self, val_loader):
-        """
-        Evaluate model on validation set
-        
-        Args:
-            val_loader: Validation data loader
-            
-        Returns:
-            Validation loss
-        """
-        self.biam_model.eval()
-        total_val_loss = 0.0
-        num_batches = 0
-        
-        with torch.no_grad():
-            for data, target in val_loader:
-                data, target = data.to(self.device), target.to(self.device)
-                
-                predictions = self.biam_model.additive_model(data)
-                
-                if self.config.task == 'regression':
-                    loss = F.mse_loss(predictions, target)
-                else:
-                    loss = F.cross_entropy(predictions, target.long())
-                
-                total_val_loss += loss.item()
-                num_batches += 1
-        
-        return total_val_loss / num_batches
-    
-    def evaluate(self, test_data):
-        """
-        Evaluate model on test set
-        
-        Args:
-            test_data: Test data tuple (X, y)
-            
-        Returns:
-            Dictionary with test metrics
-        """
-        self.biam_model.eval()
-        
-        X_test, y_test = test_data
-        X_test = torch.tensor(X_test, dtype=torch.float32).to(self.device)
-        y_test = torch.tensor(y_test, dtype=torch.float32).to(self.device)
-        
-        with torch.no_grad():
-            predictions = self.biam_model.additive_model(X_test)
-            
-            if self.config.task == 'regression':
-                mse = F.mse_loss(predictions, y_test).item()
-                mae = F.l1_loss(predictions, y_test).item()
-                
-                metrics = {
-                    'mse': mse,
-                    'mae': mae,
-                    'rmse': np.sqrt(mse)
+        self.structure_logits = torch.nn.Parameter(
+            torch.full((group_count,), float(initial), device=self.device)
+        )
+        structure_optimizer = torch.optim.SGD(
+            [self.structure_logits], lr=self.config.structure_lr
+        )
+        weight_optimizer = torch.optim.SGD(
+            self.weighting_network.parameters(), lr=self.config.weight_lr
+        )
+        self._rng = np.random.default_rng(seed)
+
+        best = None
+        stale_epochs = 0
+        stopped_epoch = self.config.epochs
+        steps_per_epoch = max(1, math.ceil(len(designs["train"]) / self.config.batch_size))
+
+        for epoch in range(1, self.config.epochs + 1):
+            losses = []
+            for _ in range(steps_per_epoch):
+                train_index = self._batch_indices(
+                    len(designs["train"]), self.config.batch_size
+                )
+                meta_index = self._batch_indices(
+                    len(designs["meta"]), self.config.meta_batch_size
+                )
+                loss = self._joint_step(
+                    designs["train"].index_select(0, train_index),
+                    targets["train"].index_select(0, train_index),
+                    designs["meta"].index_select(0, meta_index),
+                    targets["meta"].index_select(0, meta_index),
+                    structure_optimizer,
+                    weight_optimizer,
+                )
+                losses.append(loss)
+
+            if epoch % self.config.eval_interval:
+                continue
+            gates = self._hard_gates()
+            theta = self._temporary_refit(
+                gates,
+                designs["train"],
+                targets["train"],
+                self.config.tune_refit_steps,
+            )
+            tune_loss = self._mean_loss(
+                self.model.linear_from_design(
+                    designs["tune"], theta, self.model.active_columns(gates)
+                ),
+                targets["tune"],
+            ).item()
+            selected_ratio = float(gates.float().mean()) if len(gates) else 0.0
+            self.training_history["epoch"].append(epoch)
+            self.training_history["train_loss"].append(float(np.mean(losses)))
+            self.training_history["tune_loss"].append(tune_loss)
+            self.training_history["selected_group_ratio"].append(selected_ratio)
+            self.training_history["cache_size"].append(len(self.cache))
+
+            if best is None or tune_loss < best["tune_loss"] - 1e-12:
+                best = {
+                    "epoch": epoch,
+                    "tune_loss": tune_loss,
+                    "structure_logits": self.structure_logits.detach().clone(),
+                    "weighting_network": copy.deepcopy(self.weighting_network.state_dict()),
                 }
+                stale_epochs = 0
             else:
-                # Classification metrics
-                pred_classes = torch.argmax(predictions, dim=1)
-                accuracy = accuracy_score(y_test.cpu().numpy(), pred_classes.cpu().numpy())
-                
-                # F1 score
-                f1 = f1_score(y_test.cpu().numpy(), pred_classes.cpu().numpy(), average='weighted')
-                
-                metrics = {
-                    'accuracy': accuracy,
-                    'f1_score': f1
-                }
-        
-        return metrics
-    
-    def get_training_history(self):
-        """
-        Get training history
-        
-        Returns:
-            Training history dictionary
-        """
-        return self.training_history
-    
-    def save_checkpoint(self, filepath):
-        """
-        Save model checkpoint
-        
-        Args:
-            filepath: Path to save checkpoint
-        """
-        checkpoint = {
-            'biam_model_state_dict': self.biam_model.state_dict(),
-            'weighting_network_state_dict': self.weighting_network.state_dict(),
-            'upper_optimizer_state_dict': self.upper_optimizer.state_dict(),
-            'lower_optimizer_state_dict': self.lower_optimizer.state_dict(),
-            'training_history': self.training_history,
-            'config': self.config
+                stale_epochs += 1
+            if stale_epochs >= self.config.patience:
+                stopped_epoch = epoch
+                break
+
+        if best is None:
+            raise RuntimeError("训练过程中没有产生可用的调参集状态")
+        with torch.no_grad():
+            self.structure_logits.copy_(best["structure_logits"])
+        self.weighting_network.load_state_dict(best["weighting_network"])
+        final_gates = self._hard_gates()
+        final_design = torch.cat([designs["train"], designs["meta"]], dim=0)
+        final_target = torch.cat([targets["train"], targets["meta"]], dim=0)
+        final_theta = self._temporary_refit(
+            final_gates,
+            final_design,
+            final_target,
+            self.config.final_refit_steps,
+        )
+        self.model.set_final_state(final_gates, final_theta)
+        self.early_stopping = {
+            "best_epoch": best["epoch"],
+            "stopped_epoch": stopped_epoch,
+            "best_tune_loss": best["tune_loss"],
+            "patience": self.config.patience,
         }
-        
-        torch.save(checkpoint, filepath)
-    
-    def load_checkpoint(self, filepath):
-        """
-        Load model checkpoint
-        
-        Args:
-            filepath: Path to checkpoint file
-        """
-        checkpoint = torch.load(filepath, map_location=self.device)
-        
-        self.biam_model.load_state_dict(checkpoint['biam_model_state_dict'])
-        self.weighting_network.load_state_dict(checkpoint['weighting_network_state_dict'])
-        self.upper_optimizer.load_state_dict(checkpoint['upper_optimizer_state_dict'])
-        self.lower_optimizer.load_state_dict(checkpoint['lower_optimizer_state_dict'])
-        self.training_history = checkpoint['training_history']
+        return {
+            "early_stopping": self.early_stopping,
+            "history": self.training_history,
+            "cache_size": len(self.cache),
+            "candidate_groups": len(final_gates),
+            "selected_groups": int(final_gates.sum().item()),
+            "selected_group_names": self.model.selected_groups(),
+            "group_probabilities": self.model.group_probabilities(self.structure_logits),
+        }
+
+    def _joint_step(
+        self,
+        train_design: torch.Tensor,
+        train_target: torch.Tensor,
+        meta_design: torch.Tensor,
+        meta_target: torch.Tensor,
+        structure_optimizer,
+        weight_optimizer,
+    ) -> float:
+        probabilities = torch.sigmoid(self.structure_logits.detach())
+        structures = self._antithetic_structures(probabilities)
+        snapshot = dict(self.cache)
+        records = []
+        risks = []
+
+        for gates in structures:
+            key = tuple(int(value) for value in gates.tolist())
+            columns = self.model.active_columns(gates)
+            theta = snapshot.get(key)
+            if theta is None:
+                theta = torch.zeros(
+                    len(columns), self.model.output_dim, device=self.device
+                )
+            else:
+                theta = theta.detach().clone()
+
+            for _ in range(self.config.inner_steps - 1):
+                theta = self._ordinary_inner_update(
+                    theta, columns, train_design, train_target
+                )
+            theta_bar = theta.detach().requires_grad_(True)
+            train_eta = self.model.linear_from_design(train_design, theta_bar, columns)
+            train_losses = self._sample_losses(train_eta, train_target)
+            weights = self.weighting_network(train_losses.detach()).squeeze(1)
+            objective = (weights * train_losses).mean()
+            objective = objective + self.config.lambda_l2 * self.model.regularization(
+                theta_bar, columns
+            )
+            gradient = torch.autograd.grad(objective, theta_bar, create_graph=True)[0]
+            gradient = self._clip_gradient(gradient)
+            virtual_theta = theta_bar - self.config.lower_lr * gradient
+            meta_eta = self.model.linear_from_design(meta_design, virtual_theta, columns)
+            risk = self._mean_loss(meta_eta, meta_target)
+            risks.append(risk)
+            records.append((key, gates, columns, theta_bar.detach()))
+
+        detached_risks = torch.stack([risk.detach() for risk in risks])
+        baselines = self._leave_pair_out_baselines(detached_risks)
+        centered = detached_risks - baselines
+        score = (centered[:, None] * (structures - probabilities)).mean(dim=0)
+        pi0 = self.config.prior_probability
+        bounded = probabilities.clamp(1e-7, 1.0 - 1e-7)
+        sparsity = self.config.lambda_l0 * bounded * (1.0 - bounded)
+        kl = (
+            self.config.lambda_kl
+            * bounded
+            * (1.0 - bounded)
+            * torch.log(bounded * (1.0 - pi0) / (pi0 * (1.0 - bounded)))
+        )
+        structure_optimizer.zero_grad()
+        self.structure_logits.grad = score + sparsity + kl
+
+        weight_optimizer.zero_grad()
+        torch.stack(risks).mean().backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.weighting_network.parameters(), self.config.gradient_clip
+        )
+        structure_optimizer.step()
+        weight_optimizer.step()
+
+        pending: dict[tuple[int, ...], list[torch.Tensor]] = defaultdict(list)
+        actual_losses = []
+        for key, _, columns, theta_bar in records:
+            theta_actual, loss_value = self._actual_inner_update(
+                theta_bar, columns, train_design, train_target
+            )
+            pending[key].append(theta_actual)
+            actual_losses.append(loss_value)
+        for key, states in pending.items():
+            self.cache[key] = torch.stack(states).mean(dim=0).detach()
+        return float(np.mean(actual_losses))
+
+    def _ordinary_inner_update(
+        self,
+        theta: torch.Tensor,
+        columns: torch.Tensor,
+        design: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        theta = theta.detach().requires_grad_(True)
+        eta = self.model.linear_from_design(design, theta, columns)
+        losses = self._sample_losses(eta, target)
+        with torch.no_grad():
+            weights = self.weighting_network(losses.detach()).squeeze(1)
+        objective = (weights * losses).mean()
+        objective = objective + self.config.lambda_l2 * self.model.regularization(theta, columns)
+        gradient = torch.autograd.grad(objective, theta)[0]
+        return (theta - self.config.lower_lr * self._clip_gradient(gradient)).detach()
+
+    def _actual_inner_update(
+        self,
+        theta_bar: torch.Tensor,
+        columns: torch.Tensor,
+        design: torch.Tensor,
+        target: torch.Tensor,
+    ) -> tuple[torch.Tensor, float]:
+        theta = theta_bar.detach().requires_grad_(True)
+        eta = self.model.linear_from_design(design, theta, columns)
+        losses = self._sample_losses(eta, target)
+        with torch.no_grad():
+            weights = self.weighting_network(losses.detach()).squeeze(1)
+        objective = (weights * losses).mean()
+        objective = objective + self.config.lambda_l2 * self.model.regularization(theta, columns)
+        gradient = torch.autograd.grad(objective, theta)[0]
+        updated = theta - self.config.lower_lr * self._clip_gradient(gradient)
+        return updated.detach(), float(losses.detach().mean())
+
+    def _temporary_refit(
+        self,
+        gates: torch.Tensor,
+        design: torch.Tensor,
+        target: torch.Tensor,
+        steps: int,
+    ) -> torch.Tensor:
+        columns = self.model.active_columns(gates)
+        key = tuple(int(value) for value in gates.tolist())
+        cached = self.cache.get(key)
+        theta = (
+            cached.detach().clone()
+            if cached is not None
+            else torch.zeros(len(columns), self.model.output_dim, device=self.device)
+        )
+        for _ in range(steps):
+            theta = self._ordinary_inner_update(theta, columns, design, target)
+        return theta
+
+    def _antithetic_structures(self, probabilities: torch.Tensor) -> torch.Tensor:
+        half = self.config.structure_samples // 2
+        uniform = torch.as_tensor(
+            self._rng.random((half, len(probabilities))),
+            dtype=probabilities.dtype,
+            device=self.device,
+        )
+        first = uniform <= probabilities
+        second = (1.0 - uniform) <= probabilities
+        return torch.stack([first, second], dim=1).reshape(-1, len(probabilities)).float()
+
+    @staticmethod
+    def _leave_pair_out_baselines(risks: torch.Tensor) -> torch.Tensor:
+        baselines = []
+        for sample in range(len(risks)):
+            partner = sample + 1 if sample % 2 == 0 else sample - 1
+            keep = torch.ones(len(risks), dtype=torch.bool, device=risks.device)
+            keep[sample] = False
+            keep[partner] = False
+            baselines.append(risks[keep].mean())
+        return torch.stack(baselines)
+
+    def _hard_gates(self) -> torch.Tensor:
+        return torch.sigmoid(self.structure_logits.detach()) >= self.config.gate_threshold
+
+    def _batch_indices(self, size: int, batch_size: int) -> torch.Tensor:
+        count = min(size, batch_size)
+        values = self._rng.choice(size, count, replace=False)
+        return torch.as_tensor(values, dtype=torch.long, device=self.device)
+
+    def _target_tensor(self, values: np.ndarray) -> torch.Tensor:
+        dtype = torch.float32 if self.config.task == "regression" else torch.long
+        return torch.as_tensor(values, dtype=dtype, device=self.device)
+
+    def _sample_losses(self, eta: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if self.config.task == "regression":
+            return (eta.squeeze(1) - target.float()).square()
+        if self.config.num_classes == 2:
+            return F.binary_cross_entropy_with_logits(
+                eta.squeeze(1), target.float(), reduction="none"
+            )
+        reference = torch.zeros((len(eta), 1), dtype=eta.dtype, device=eta.device)
+        logits = torch.cat([eta, reference], dim=1)
+        return F.cross_entropy(logits, target.long(), reduction="none")
+
+    def _mean_loss(self, eta: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self._sample_losses(eta, target).mean()
+
+    def _clip_gradient(self, gradient: torch.Tensor) -> torch.Tensor:
+        norm = torch.linalg.vector_norm(gradient)
+        if norm <= self.config.gradient_clip:
+            return gradient
+        return gradient * (self.config.gradient_clip / (norm + 1e-12))
+
+    def evaluate(self, X, y) -> dict[str, Any]:
+        self.biam_model.eval()
+        with torch.no_grad():
+            output = self.biam_model(X)
+            truth = np.asarray(y)
+            if self.config.task == "regression":
+                predictions = output.squeeze(1).cpu().numpy()
+                return {
+                    "metrics": {
+                        "mse": float(mean_squared_error(truth, predictions)),
+                        "r2": float(r2_score(truth, predictions)),
+                    },
+                    "predictions": predictions,
+                }
+            probabilities = torch.softmax(output, dim=1).cpu().numpy()
+            predictions = probabilities.argmax(axis=1)
+            return {
+                "metrics": {
+                    "accuracy": float(accuracy_score(truth, predictions)),
+                    "macro_f1": float(f1_score(truth, predictions, average="macro")),
+                },
+                "predictions": predictions,
+                "probabilities": probabilities,
+            }
+
+    def get_training_history(self) -> dict[str, list]:
+        return self.training_history
+
+    def save_checkpoint(self, path: str | Path) -> None:
+        torch.save(
+            {
+                "model": self.biam_model.state_dict(),
+                "weighting_network": self.weighting_network.state_dict(),
+                "structure_logits": self.structure_logits.detach().cpu(),
+                "early_stopping": self.early_stopping,
+                "history": self.training_history,
+                "config": self.config.to_dict(),
+            },
+            path,
+        )

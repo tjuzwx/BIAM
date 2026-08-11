@@ -1,105 +1,50 @@
-"""
-BIAM Model
-Main model class that integrates additive model and weighting network
-"""
+from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Any, Tuple
-import numpy as np
+
+from models.biam_additive_model import BIAMAdditiveModel
+from models.biam_weighting_network import BIAMWeightingNetwork
+
 
 class BIAMModel(nn.Module):
-    
-    def __init__(self, config, device):
-        """
-        Initialize BIAM model
-        
-        Args:
-            config: BIAM configuration
-            device: Device to run on
-        """
-        super(BIAMModel, self).__init__()
-        
+    """BIAM 推理模型；权重网络只在训练阶段使用。"""
+
+    def __init__(self, config, device=None):
+        super().__init__()
         self.config = config
-        self.device = device
+        self.device = torch.device(device or config.device)
         self.task = config.task
-        
-        # Initialize additive model
-        self.additive_model = BIAMAdditiveModel(config, device)
-        
-        # Initialize weighting network
-        self.weighting_network = BIAMWeightingNetwork(config, device)
-        
-        # Move to device
-        self.to(device)
-    
-    def forward(self, x, return_weights=False):
-        """
-        Forward pass through BIAM model
-        
-        Args:
-            x: Input features
-            return_weights: Whether to return sample weights
-            
-        Returns:
-            Model predictions and optionally weights
-        """
-        # Get predictions from additive model
-        predictions = self.additive_model(x)
-        
-        if return_weights:
-            with torch.no_grad():
-                if self.task == 'regression':
-                    prediction_uncertainty = torch.var(predictions, dim=1, keepdim=True)
-                else:
-                    prediction_uncertainty = F.softmax(predictions, dim=1).max(dim=1, keepdim=True)[0]
-                
-                weights = self.weighting_network(prediction_uncertainty)
-            
-            return predictions, weights
-        else:
+        self.additive_model = BIAMAdditiveModel(config, self.device)
+        self.weighting_network = BIAMWeightingNetwork(config, self.device)
+        self.to(self.device)
+
+    def forward(
+        self,
+        X: np.ndarray | torch.Tensor,
+        return_weights: bool = False,
+        targets: torch.Tensor | None = None,
+    ):
+        predictions = self.additive_model(X)
+        if not return_weights:
             return predictions
-    
-    def get_feature_importance(self):
-        """
-        Get feature importance from additive model
-        
-        Returns:
-            Feature importance scores
-        """
+        if targets is None:
+            raise ValueError("返回样本权重时必须提供 targets")
+        if self.task == "regression":
+            losses = F.mse_loss(predictions.squeeze(1), targets.float(), reduction="none")
+        else:
+            losses = F.cross_entropy(predictions, targets.long(), reduction="none")
+        return predictions, self.weighting_network(losses.detach())
+
+    def predict_proba(self, X: np.ndarray | torch.Tensor) -> torch.Tensor:
+        if self.task != "classification":
+            raise ValueError("回归模型没有类别概率")
+        return torch.softmax(self(X), dim=1)
+
+    def get_feature_importance(self) -> np.ndarray:
         return self.additive_model.get_feature_importance()
-    
-    def get_missing_indicators(self):
-        """
-        Get missing value indicators
-        
-        Returns:
-            Missing value indicators
-        """
+
+    def get_missing_indicators(self) -> np.ndarray:
         return self.additive_model.get_missing_indicators()
-    
-    def predict_with_uncertainty(self, x, n_samples=100):
-        """
-        Make predictions with uncertainty estimation
-        
-        Args:
-            x: Input features
-            n_samples: Number of Monte Carlo samples
-            
-        Returns:
-            Mean predictions and uncertainty estimates
-        """
-        predictions = []
-        
-        for _ in range(n_samples):
-            # Add small noise for uncertainty estimation
-            x_noisy = x + torch.randn_like(x) * 0.01
-            pred = self.forward(x_noisy)
-            predictions.append(pred)
-        
-        predictions = torch.stack(predictions, dim=0)
-        mean_pred = predictions.mean(dim=0)
-        std_pred = predictions.std(dim=0)
-        
-        return mean_pred, std_pred
